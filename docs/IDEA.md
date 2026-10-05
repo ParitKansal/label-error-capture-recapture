@@ -1,0 +1,11 @@
+# The idea in plain language
+
+A benchmark is a list of questions with answer keys. Some answer keys are wrong. People find wrong keys with detectors: a strong model disagrees with the key, a judge model says the question is broken, or a statistical method (confident learning, item response theory) marks the item as suspicious. Each detector finds some errors and misses others, so the number of errors found is always smaller than the number that exist. Papers therefore say "at least 3%".
+
+Ecologists solved this problem for animals in the 1890s. Catch animals on day one, mark them, release them. Catch again on day two. If half of the day-two catch is already marked, you saw about half of the population on day one, so the population is about twice the day-one catch. This is the Lincoln–Petersen estimator. With three or more catches, log-linear models handle catches that are not independent, and Chao's estimator gives a safe lower bound when some animals are much harder to catch than others. Epidemiologists use the same tools to count drug users from overlapping hospital, police and clinic lists, and software engineers used them in the 1990s and 2000s to estimate how many bugs remain after several inspectors review the same code.
+
+Here the "animals" are wrong answer keys and the "catches" are detectors. Each detector flags items; a human (or, for validation, an existing expert re-annotation) checks the flagged items, so only real errors count as captures. The pattern of which detectors caught which errors gives an estimate of the total, including errors nobody caught, with a confidence interval. This also says how much checking an audit needs and when adding another detector stops paying off.
+
+The idea is not new statistics. It is a new and useful transfer: no paper in machine learning estimates the number of label errors that no detector found (three independent novelty checks, see `literature/NOVELTY.md`).
+
+The main danger is that detectors are not independent. If every language model misses the same subtle errors, the overlap looks large, and the method underestimates the total. The kill experiment tests exactly this on MMLU-Redux, where experts have re-checked thousands of questions, so the true number of errors is known.
