@@ -21,10 +21,11 @@ from __future__ import annotations
 import argparse
 import itertools
 import multiprocessing as mp
+import os
 import sys
 from dataclasses import dataclass
 from fractions import Fraction
-from math import comb
+from math import comb, sqrt
 
 import numpy as np
 
@@ -328,49 +329,92 @@ def _one_replicate(args):
     return out
 
 
-def run_simulation(n_rep: int, n_boot: int, processes: int | None = None):
-    print(f"simulation study: {n_rep} replicates per scenario, {n_boot} bootstrap draws")
-    print(
-        "coverage = share of replicates whose 95% interval contains the true count.\n"
-        "ratio    = median estimate / truth. miss = share of true errors no detector found.\n"
-    )
-    header = f"{'scenario':12s} {'truth':>5s} {'miss':>5s} " + " ".join(
-        f"{name:>21s}" for name in ESTIMATORS
-    )
-    print(header)
-    print(f"{'':12s} {'':>5s} {'':>5s} " + " ".join(f"{'cover  ratio  unst':>21s}" for _ in ESTIMATORS))
-    print("-" * len(header))
+def _emit(line: str, out_handle=None):
+    """Print and, if an output file is open, append and flush it immediately.
 
-    rows = []
-    pool = mp.Pool(processes) if (processes or 1) > 1 else None
+    Rows are written as each scenario finishes, so a crash or a stop leaves
+    usable partial results instead of an empty file. The first full run of this
+    study died in the worker pool and produced nothing, because stdout to a
+    redirected file is block-buffered; that is what this avoids.
+    """
+    print(line, flush=True)
+    if out_handle is not None:
+        out_handle.write(line + "\n")
+        out_handle.flush()
+        os.fsync(out_handle.fileno())
+
+
+def run_simulation(n_rep: int, n_boot: int, processes: int = 6, out_path: str | None = None):
+    out_handle = open(out_path, "w") if out_path else None
     try:
-        for sc in scenarios():
-            jobs = [(sc, 10_000 + i, n_boot) for i in range(n_rep)]
-            res = pool.map(_one_replicate, jobs) if pool else [_one_replicate(j) for j in jobs]
-            res = [r for r in res if r]
-            miss = 1 - np.mean([r["_found"] for r in res]) / sc.n_true
-            line = f"{sc.key:12s} {sc.n_true:5d} {miss:5.0%} "
-            row = {"scenario": sc.key, "description": sc.description,
-                   "truth": sc.n_true, "miss": miss}
-            for name, est in ESTIMATORS.items():
-                vals = np.array([r[est] for r in res], dtype=float)
-                with np.errstate(invalid="ignore"):
-                    cover = np.nanmean(
-                        ((vals[:, 1] <= sc.n_true) & (sc.n_true <= vals[:, 2])).astype(float)
-                    )
-                ratio = np.median(vals[:, 0]) / sc.n_true
-                unstable = 1 - np.mean(vals[:, 3])
-                line += f" {cover:6.0%} {ratio:6.2f} {unstable:5.0%}"
-                row[name] = {"coverage": float(cover), "ratio": float(ratio),
-                             "unstable": float(unstable)}
-            print(line)
-            rows.append(row)
+        _emit(
+            f"simulation study: {n_rep} replicates per scenario, {n_boot} bootstrap draws, "
+            f"{processes} processes",
+            out_handle,
+        )
+        _emit(
+            "coverage = share of replicates whose 95% interval contains the true count. "
+            "ratio = median estimate / truth. miss = share of true errors no detector found.",
+            out_handle,
+        )
+        header = f"{'scenario':12s} {'truth':>5s} {'miss':>5s} " + " ".join(
+            f"{name:>21s}" for name in ESTIMATORS
+        )
+        _emit("", out_handle)
+        _emit(header, out_handle)
+        _emit(
+            f"{'':12s} {'':>5s} {'':>5s} "
+            + " ".join(f"{'cover  ratio  unst':>21s}" for _ in ESTIMATORS),
+            out_handle,
+        )
+        _emit("-" * len(header), out_handle)
+
+        rows = []
+        all_scenarios = scenarios()
+        pool = mp.Pool(processes) if processes > 1 else None
+        try:
+            for sc in all_scenarios:
+                jobs = [(sc, 10_000 + i, n_boot) for i in range(n_rep)]
+                if pool:
+                    res = list(pool.imap_unordered(_one_replicate, jobs, chunksize=4))
+                else:
+                    res = [_one_replicate(j) for j in jobs]
+                res = [r for r in res if r]
+                if not res:
+                    _emit(f"{sc.key:12s} no usable replicates", out_handle)
+                    continue
+                miss = 1 - np.mean([r["_found"] for r in res]) / sc.n_true
+                line = f"{sc.key:12s} {sc.n_true:5d} {miss:5.0%} "
+                row = {"scenario": sc.key, "description": sc.description,
+                       "truth": sc.n_true, "miss": float(miss), "n_rep": len(res)}
+                for name, est in ESTIMATORS.items():
+                    vals = np.array([r[est] for r in res], dtype=float)
+                    with np.errstate(invalid="ignore"):
+                        cover = np.nanmean(
+                            ((vals[:, 1] <= sc.n_true) & (sc.n_true <= vals[:, 2])).astype(float)
+                        )
+                    ratio = np.median(vals[:, 0]) / sc.n_true
+                    unstable = 1 - np.mean(vals[:, 3])
+                    line += f" {cover:6.0%} {ratio:6.2f} {unstable:5.0%}"
+                    row[name] = {"coverage": float(cover), "ratio": float(ratio),
+                                 "unstable": float(unstable)}
+                _emit(line, out_handle)
+                rows.append(row)
+        finally:
+            if pool:
+                pool.close()
+                pool.join()
+        _emit("", out_handle)
+        se = sqrt(0.95 * 0.05 / max(n_rep, 1)) * 100
+        _emit(
+            f"Monte Carlo standard error on a coverage near 95% at {n_rep} replicates: "
+            f"{se:.1f} percentage points.",
+            out_handle,
+        )
+        return rows
     finally:
-        if pool:
-            pool.close()
-            pool.join()
-    print()
-    return rows
+        if out_handle:
+            out_handle.close()
 
 
 def main():
@@ -379,16 +423,22 @@ def main():
     ap.add_argument("--unit-only", action="store_true")
     ap.add_argument("--n-rep", type=int, default=None)
     ap.add_argument("--n-boot", type=int, default=None)
-    ap.add_argument("--processes", type=int, default=mp.cpu_count())
+    ap.add_argument(
+        "--processes",
+        type=int,
+        default=min(6, mp.cpu_count()),
+        help="worker processes; capped low on purpose, a full pool starved this machine",
+    )
+    ap.add_argument("--out", default=None, help="write the table here as rows complete")
     args = ap.parse_args()
 
     ok = run_unit_tests()
     if args.unit_only:
         return 0 if ok else 1
 
-    n_rep = args.n_rep or (60 if args.quick else 400)
-    n_boot = args.n_boot or (100 if args.quick else 300)
-    run_simulation(n_rep, n_boot, args.processes)
+    n_rep = args.n_rep or (60 if args.quick else 200)
+    n_boot = args.n_boot or (100 if args.quick else 200)
+    run_simulation(n_rep, n_boot, args.processes, args.out)
     return 0 if ok else 1
 
 

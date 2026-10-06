@@ -1,9 +1,5 @@
 # Pre-registration: kill experiment v1
 
-**Status: work in progress, not yet ready for approval.** Section 6 is provisional (the full simulation
-study has not completed) and the 2-of-3-keys change the author asked for is not yet applied; both are the
-next steps in `STATUS.md`. Sections 1-5 and 7-13 are the intended final text.
-
 **Everything in this file is fixed before any GPU run and before any detector output is joined to the
 MMLU-Redux expert labels.** The commit hash of this file goes into `RESULTS.md`. Anything decided after
 results are seen is labelled exploratory and reported separately, never as a confirmatory result.
@@ -92,7 +88,10 @@ Two consequences worth stating in advance, because they shape the compute plan:
 
 **Dependence is the expected failure mode.** D1–D4 are all instruction-tuned transformers and may miss the
 same subtle errors. That is why D5 comes from a different method entirely, and why the primary estimator
-carries two-way interaction terms (§5).
+carries two-way interaction terms (§5). Note that our own simulation (§6) does **not** show a coverage
+penalty at four detectors; the fifth detector is here because a non-LLM detector family is worth having on
+its own terms, and because Briand et al. (2000) found accuracy degrades with too few inspectors on real
+data.
 
 ## 4. What counts as a capture
 
@@ -118,8 +117,8 @@ higher interactions are not considered.
   from the fitted model and only the detected part is kept, so the interval carries the uncertainty in the
   part nobody detected. Model selection is re-run inside every replicate, so the interval also pays for
   selection uncertainty. This choice was made from the simulation study in §6 alone, before any detector was
-  run and with no expert labels involved; the alternative (resampling the found errors) reaches only 82–93%
-  coverage against the parametric bootstrap's 90–100%.
+  run and with no expert labels involved: across the eight scenarios in §6 the parametric interval covers
+  90–100% against the resampling interval's 90–96%, at or above it everywhere and strictly above in six.
 - **Stability guard, fixed now:** if the selected model implies more than **10 ×** the found count, or the
   fit fails to converge, the fit is declared unstable, the independence model is used instead, and the
   estimate is reported as unstable. The 10 × figure comes from simulation only.
@@ -145,53 +144,68 @@ not read it. Implementing an estimator from a paper we have not read would be wo
 
 ## 6. Simulation evidence, recorded before any GPU run
 
-> **PROVISIONAL — this section is not final and this file is not ready for approval.**
-> The numbers below come from the small configuration (`--quick`: 60 replicates per scenario, 100 bootstrap
-> draws), which completed. The full study (400 replicates, 300 draws) was started and did **not** finish, so
-> no full-size numbers exist yet. At 60 replicates the Monte Carlo standard error on a coverage near 95% is
-> about 2.8 percentage points, so treat every coverage figure here as +/- 6 points and do not read small
-> differences between scenarios. Section 8's GO threshold must not be judged against this table.
+`python src/test_crc.py --out sim.txt` runs seven unit tests (all passing) and the coverage study below:
+**200 replicates per scenario, 200 bootstrap draws, 6 worker processes**, with each scenario row flushed to
+disk as it completes. Monte Carlo standard error on a coverage near 95% is **1.5 percentage points**, so
+treat differences smaller than about 3 points as noise.
 
-`python src/test_crc.py` runs seven unit tests (all passing) and the coverage study below. Scenarios cover
-independent detectors, detector-specific rates, heterogeneous item detectability, and the project's own
-failure mode: four judges sharing a latent factor while confident learning stays conditionally independent.
-
-Each cell is coverage of the 95% interval / median estimate divided by truth. `miss` is the share of true
-errors no detector found. `loglin-par` is the pre-registered primary; `loglin-npar` is the same point
-estimate with a resampling interval, shown only to justify the choice between them.
+Scenarios cover independent detectors, detector-specific rates, heterogeneous item detectability, and the
+project's own failure mode: four judges sharing a latent factor while confident learning stays conditionally
+independent. Each cell is coverage of the 95% interval / median estimate divided by truth. `miss` is the
+share of true errors no detector found. `loglin-par` is the pre-registered primary; `loglin-npar` is the
+same point estimate with a resampling interval, shown only to justify the choice between them.
 
 | scenario | truth | miss | loglin-par | loglin-npar | jackknife | chao | union |
 |---|---|---|---|---|---|---|---|
-| M0 (independent, equal rates) | 181 | 16% | **98% / 1.00** | 90% / 1.00 | 8% / 1.19 | 87% / 1.04 | 0% / 0.83 |
-| Mt (independent, per-detector rates) | 181 | 11% | **100% / 1.00** | 90% / 1.00 | 25% / 1.15 | 85% / 1.03 | 0% / 0.90 |
-| Mh (item detectability varies, sd 1.0) | 181 | 18% | **95% / 0.95** | 93% / 0.95 | 57% / 1.07 | 93% / 0.97 | 0% / 0.82 |
-| Mh-strong (sd 1.8) | 181 | 25% | **90% / 0.93** | 87% / 0.93 | 85% / 0.93 | 55% / 0.87 | 0% / 0.75 |
-| dep-judges (4 judges share a factor, rho 1.5) | 181 | 18% | **98% / 0.97** | 90% / 0.97 | 63% / 1.07 | 93% / 0.97 | 0% / 0.83 |
-| dep-strong (rho 2.5, designed to fail) | 181 | 20% | **98% / 0.97** | 98% / 0.97 | 70% / 1.11 | 95% / 0.98 | 0% / 0.81 |
-| dep-4det (only 4 detectors) | 181 | 19% | **97% / 0.98** | 82% / 0.98 | 52% / 1.11 | 88% / 1.00 | 0% / 0.81 |
-| dep-n266 (injection-sized population) | 266 | 17% | **98% / 0.98** | 90% / 0.98 | 43% / 1.10 | 93% / 0.98 | 0% / 0.83 |
+| M0 (independent, equal rates) | 181 | 17% | **100% / 1.00** | 96% / 1.00 | 7% / 1.19 | 90% / 1.03 | 0% / 0.83 |
+| Mt (independent, per-detector rates) | 181 | 11% | **100% / 1.00** | 90% / 1.00 | 18% / 1.14 | 86% / 1.03 | 0% / 0.89 |
+| Mh (item detectability varies, sd 1.0) | 181 | 18% | **93% / 0.96** | 90% / 0.96 | 62% / 1.06 | 92% / 0.97 | 0% / 0.82 |
+| Mh-strong (sd 1.8) | 181 | 25% | **90% / 0.94** | 90% / 0.94 | 88% / 0.95 | 60% / 0.87 | 0% / 0.75 |
+| dep-judges (4 judges share a factor, rho 1.5) | 181 | 18% | **99% / 0.96** | 90% / 0.96 | 64% / 1.07 | 93% / 0.97 | 0% / 0.82 |
+| dep-strong (rho 2.5, designed to fail) | 181 | 20% | **100% / 0.97** | 96% / 0.97 | 72% / 1.10 | 96% / 0.98 | 0% / 0.80 |
+| dep-4det (only 4 detectors) | 181 | 20% | **98% / 0.98** | 92% / 0.98 | 59% / 1.11 | 94% / 0.98 | 0% / 0.80 |
+| dep-n266 (injection-sized population) | 266 | 18% | **99% / 0.98** | 90% / 0.98 | 55% / 1.09 | 94% / 0.98 | 0% / 0.82 |
 
-Readings, all provisional until the full study is rerun:
+What this does and does not establish:
 
-- The primary estimator with the parametric bootstrap sits at or near nominal coverage in every scenario,
-  including the designed-to-fail case where the four judges are strongly dependent. That is the result this
-  design needs, and it is the reason the parametric bootstrap is the pre-registered interval: the
-  resampling interval is visibly worse in the same runs.
-- The **Mh jackknife runs high and its interval is too narrow** except under strong heterogeneity. It is
-  reported and it is not what GO depends on. Recorded now so it is not rediscovered after results.
-- The **four-detector scenario is worse than the five-detector one** on the resampling interval, which is
-  the direction Briand et al. (2000) predict: too few capture occasions and no model is reliable. This is
-  the evidence for five detectors rather than four. The difference is within Monte Carlo error at this
-  replicate count and needs the full rerun to stand up.
-- Chao sits below the truth under heterogeneity, as a floor should, and runs slightly high under
-  near-homogeneous capture. It is read as a floor only.
+- **The primary estimator holds coverage in every scenario, 90% to 100%, never below the 85% threshold in
+  §8** — including the designed-to-fail case where the four judges share a strong latent factor. That is
+  the result this design needed. Its median estimate runs 0.94–1.00 of truth, so it is mildly conservative
+  under heterogeneity rather than optimistic.
+- **The parametric bootstrap is the right interval, but by a smaller margin than it first appeared.** It is
+  at or above the resampling interval in all eight scenarios and strictly above in six, most clearly under
+  independence (100% against 96% and 90%). An earlier 60-replicate run suggested a gap of 82–93% against
+  90–100%; at 200 replicates the real gap is 90–96% against 90–100%. The choice stands; the strength of the
+  evidence for it was overstated and is corrected here.
+- **The four-detector scenario shows no penalty, contrary to what the small run suggested.** `dep-4det`
+  reaches 98% on the primary estimator, indistinguishable from the five-detector rows. So **our own
+  simulation does not support preferring five detectors over four.** The five-detector design stands on the
+  gate-1 decision and on Briand et al. (2000), who found on real inspection data that accuracy degrades
+  with too few inspectors — an effect this configuration, at these detection rates and this population
+  size, does not reproduce. Stated plainly so nobody later cites our simulation as evidence it does.
+- **The Mh jackknife runs high and its interval is far too narrow** — 7% to 88% coverage, median estimate up
+  to 1.19 of truth. It is reported as a secondary estimator and GO does not depend on it. Recorded now so
+  it is not rediscovered after results.
+- **Chao behaves as a floor**, sitting below truth under heterogeneity (0.87 under Mh-strong, 60% coverage)
+  and slightly above under near-homogeneous capture. It is read as a floor only, never as a point estimate.
+- **The union baseline never covers the truth in any scenario** and misses 11–25% of errors, which is the
+  gap this project exists to close.
 
 ## 7. The injection experiment (the main calibration test)
 
-**Scoring, on GPU, once.** Each judge scores **every `ok` item against each of its 3 wrong keys**
-**[gate 1]**: 5,330 × 3 = 15,990 extra prompts per judge. Together with the 5,700-item Redux pass that is
-**21,690 prompts per judge**. Nothing about the injection is decided on GPU; the GPU only produces, for every
-(`ok` item, candidate wrong key) pair, that judge's verdict.
+**Scoring, on GPU, once.** Each judge scores **every `ok` item against 2 of its 3 wrong keys**:
+5,330 × 2 = 10,660 extra prompts per judge. Together with the 5,700-item Redux pass that is **16,360 prompts
+per judge**, 65,440 across the four judges. Nothing about the injection is decided on GPU; the GPU only
+produces, for every (`ok` item, candidate wrong key) pair, that judge's verdict.
+
+**Which 2 of the 3.** For each `ok` item, the two wrong options to score are drawn uniformly at random
+without replacement from its three non-key options, with seed `20261006`, generated once and stored. The
+selection is random per item rather than positional, so it carries no bias toward any option position. Every
+judge scores the **same** two options for a given item, so the detectors stay comparable.
+
+This replaces the earlier 3-of-3 design (15,990 extra prompts per judge, 21,690 total). The earlier design
+needed a throughput-triggered trim rule to stay inside the GPU budget; at 2 of 3 the budget has room and the
+trim rule is gone, so there is no conditional branch left in the compute plan.
 
 **Replicates, on CPU, at analysis time.** **≥ 200 injection replicates** **[gate 1]**, seeds
 `20261006 + 0 … 199`, fixed here. Each replicate:
@@ -199,7 +213,9 @@ Readings, all provisional until the full study is rerun:
 1. Draw an injection set of **266 items** (5% of the 5,330 `ok` items), stratified by MMLU supercategory in
    proportion to each stratum's `ok` count: **STEM 86, humanities 60, social sciences 57, other 63**
    (largest-remainder rounding of 5%, fixed here so it cannot drift).
-2. For each drawn item, flip the key to one of its 3 wrong options, drawn uniformly at random.
+2. For each drawn item, flip the key to one of its **2 scored** wrong options, drawn uniformly at
+   random. (Those two were themselves drawn at random from the item's three wrong options, so no
+   option position is favoured.)
 3. Build the benchmark for that replicate: drawn items carry the flipped key, every other item carries its
    original key.
 4. Read off each judge's verdict for every item from the scored table — flipped items from the injection
@@ -271,25 +287,24 @@ Swapping it in for any other reason is not permitted.
 
 ## 10. Compute
 
-Measured against the hard stop of 7 A100-hours in `PLAN.md`. Prompt counts: 21,690 per judge
-(5,700 Redux + 15,990 injection scoring), 86,760 across the four judges. D5 adds no session, because the
-option-probability pass runs in the judge notebook while the weights are loaded.
+Measured against the hard stop of 7 A100-hours in `PLAN.md`. Prompt counts: **16,360 per judge**
+(5,700 Redux + 10,660 injection scoring), **65,440** across the four judges. D5 adds no session, because the
+option-probability pass runs in the judge notebook while the weights are loaded, and those probabilities do
+not depend on the answer key, so one pass serves the Redux analysis and every injection replicate.
 
 | Step | If it works | Worst case |
 |---|---|---|
 | Smoke test: every notebook on 50 items | 0.4 | 0.8 |
-| 4 judge notebooks in parallel, 21,690 prompts each, plus option probabilities for D5 | 2.5 | 4.0 |
+| 4 judge notebooks in parallel, 16,360 prompts each, plus option probabilities for D5 | 2.1 | 3.4 |
 | Contamination check, 2 newer models (Redux pass + 1,500-item injection subsample) | 0.5 | 1.0 |
 | 6th detector from another family, only if dependence is extreme | 0 | 0.6 |
 | Analysis, all 200+ replicates and all bootstraps | CPU High-RAM, 0 | 0 |
-| **Total** | **3.4** | **6.4** |
+| **Total** | **3.0** | **5.8** |
 
-**Pre-registered trim rule.** Each notebook reports measured prompts per second at the end of the smoke test.
-If the projected total for the four judge notebooks exceeds **4.5 A100-hours**, the injection scoring pool is
-cut from all 5,330 `ok` items to a **stratified random 2,400** (seed 20261006), giving 12,900 prompts per
-judge instead of 21,690 — a 41% cut. Injection replicates are then drawn from that pool. This rule triggers
-on measured throughput only; it has nothing to do with any label, and it is fixed here so it cannot be
-invoked selectively later.
+Worst case leaves about 1.2 hours of margin under the hard stop, so **there is no trim rule**: the design
+runs as written or not at all. Each notebook still reports measured prompts per second at the end of its
+smoke test, as a check that the projection above holds; if the projection for the four judge notebooks
+exceeds 4.5 A100-hours, stop and report rather than quietly cutting scope.
 
 Stop and report if the experiment passes 7 A100-hours, whatever state it is in.
 
