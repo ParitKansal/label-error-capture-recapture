@@ -567,6 +567,172 @@ print(f"{n_key} key errors, {n_expert} expert items excluded from primary truth"
 assert n_key == 181, f"expected 181 key errors at the pinned revision, got {n_key}"
 '''
 
+LOAD_CELL = """
+# Load the four judges and their option probabilities (PREREG 3). Labels are NOT used here.
+import numpy as np, collections
+JUDGE_SHORTS = ["llama3", "mistral", "qwen2", "phi3"]          # D1..D4, PREREG 3
+DETECTOR_NAMES = ("D1_llama3", "D2_mistral", "D3_qwen2", "D4_phi3", "D5_cleanlab")
+N = len(ITEMS)
+ANS = np.array([int(it["answer"]) for it in ITEMS])
+
+def _read_jsonl(path):
+    out = {}
+    with open(path) as fh:
+        for line in fh:
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue            # a half-written last line after a disconnect
+            out[r.get("row_id", r.get("item_index"))] = r   # resume can repeat a row: last wins
+    return out
+
+REDUX_FLAG = np.zeros((N, 4), dtype=np.int8)   # flag on the item's real key, shuffled order
+REDUX_VERDICT = {}
+INJ_FLAG = [dict() for _ in JUDGE_SHORTS]      # (item, wrong key) -> 0/1
+ORIG_VERDICT = [dict() for _ in JUDGE_SHORTS]  # 9a original-order rows
+UNPARSED = {}
+for j, m in enumerate(JUDGE_SHORTS):
+    rows = _read_jsonl(os.path.join(DRIVE, f"judge_{m}.jsonl")).values()
+    kinds = collections.Counter(r["kind"] for r in rows)
+    redux = {r["item_index"]: r["verdict"] for r in rows if r["kind"] == "redux"}
+    assert len(redux) == N, f"{m}: {len(redux)} redux rows, expected {N} -- judge not finished"
+    REDUX_VERDICT[m] = redux
+    for i, v in redux.items():
+        REDUX_FLAG[i, j] = int(v == "INCORRECT")
+    for r in rows:
+        if r["kind"] == "inject":
+            INJ_FLAG[j][(r["item_index"], r["claimed_key_original"])] = int(r["verdict"] == "INCORRECT")
+        elif r["kind"] == "original":
+            ORIG_VERDICT[j][r["item_index"]] = r["verdict"]
+    UNPARSED[m] = {k: sum(r["verdict"] == "unparsed" for r in rows if r["kind"] == k) / max(c, 1)
+                   for k, c in kinds.items()}
+    print(f"{m}: rows {dict(kinds)}  unparsed {', '.join(f'{k} {v:.1%}' for k, v in UNPARSED[m].items())}")
+    if max(UNPARSED[m].values()) > 0.05:
+        print(f"  WARNING: {m} unparsed rate above 5% -- reported as broken (PREREG 3, 12)")
+
+# D5: average the four models' option probabilities (already mapped to original option order)
+P = np.zeros((N, 4))
+for m in JUDGE_SHORTS:
+    pr = _read_jsonl(os.path.join(DRIVE, f"probs_{m}.jsonl"))
+    assert len(pr) == N, f"{m}: probability pass has {len(pr)} of {N} items"
+    for i, r in pr.items():
+        P[int(i)] += np.asarray(r["probs"], dtype=float)
+P /= len(JUDGE_SHORTS)
+P = P / P.sum(axis=1, keepdims=True)
+
+def d5_flags(labels):
+    from cleanlab.filter import find_label_issues
+    return find_label_issues(labels=np.asarray(labels), pred_probs=P,
+                             filter_by="prune_by_noise_rate").astype(np.int8)
+
+def build_flag_matrix(flipped_key):
+    # (N, 5) flags for a benchmark whose keys are ANS except the flipped items (PREREG 7.4)
+    flags = np.zeros((N, 5), dtype=np.int8)
+    flags[:, :4] = REDUX_FLAG
+    labels = ANS.copy()
+    for i, k in flipped_key.items():
+        labels[i] = k
+        for j in range(4):
+            flags[i, j] = INJ_FLAG[j][(i, k)]
+    flags[:, 4] = d5_flags(labels)
+    return flags
+print("loaded; inject rows per judge:", [len(d) for d in INJ_FLAG])
+"""
+
+REDUX_CELL = """
+# The Redux arm: realism test against the 181 expert-labelled key errors (PREREG 2, 4, 5, 8).
+import crc
+MASTER_SEED = 20261006
+is_key = np.array([t["is_key_error"] for t in truth])
+is_expert = np.array([t["is_expert"] for t in truth])
+is_ok = np.array([t["is_ok"] for t in truth])
+FLAGS_REDUX = build_flag_matrix({})
+
+print("per detector on Redux (precision excludes the 32 expert items):")
+for j, name in enumerate(DETECTOR_NAMES):
+    f = FLAGS_REDUX[:, j].astype(bool)
+    tp = int((f & is_key).sum()); fp = int((f & ~is_key & ~is_expert).sum())
+    print(f"  {name:12s} flags {int(f.sum()):5d}  captures {tp:4d}  recall {tp/181:6.1%}  "
+          f"precision {tp/max(tp+fp,1):6.1%}  flags on ok items {int((f & is_ok).sum()):5d}")
+
+data_redux = crc.CaptureData.from_flags(FLAGS_REDUX, is_key, DETECTOR_NAMES)
+pat, cnt = data_redux.cell_counts()
+print("\\ncapture-pattern table (D1..D5), 31 cells:")
+for p_, c_ in zip(pat, cnt):
+    print("  ", "".join(map(str, p_)), int(c_))
+
+REDUX_EST = crc.summary(data_redux, n_boot=2000, seed=MASTER_SEED)
+PRIMARY_REDUX = REDUX_EST[0]
+print(f"\\nunion found {data_redux.n_found} of 181 key errors")
+for e in REDUX_EST:
+    gof = e.extra.get("gof_p")
+    print(f"  {e.name:22s} n_hat {e.n_hat:8.1f}  CI [{e.lo:7.1f}, {e.hi:7.1f}]  ok={e.ok}  "
+          + (f"gof_p={gof:.3f}  " if gof is not None and gof == gof else "") + e.note)
+print(f"\\nestimated key errors NO detector found: {PRIMARY_REDUX.n_hat - data_redux.n_found:.1f} "
+      f"[{PRIMARY_REDUX.lo - data_redux.n_found:.1f}, {PRIMARY_REDUX.hi - data_redux.n_found:.1f}]")
+union_flags = int(FLAGS_REDUX.any(axis=1).sum())
+print(f"audit cost: a human checks {union_flags} flagged items to find {data_redux.n_found} key errors")
+
+print("\\nsecondary, by supercategory (not part of GO):")
+cats = np.array([t["supercategory"] for t in truth])
+for c in sorted(set(cats)):
+    m_ = cats == c
+    d_ = crc.CaptureData.from_flags(FLAGS_REDUX[m_], is_key[m_], DETECTOR_NAMES)
+    e_ = crc.loglinear(d_, n_boot=2000, seed=MASTER_SEED)
+    print(f"  {c:34s} truth {int(is_key[m_].sum()):3d}  union {d_.n_found:3d}  "
+          f"n_hat {e_.n_hat:7.1f}  CI [{e_.lo:6.1f}, {e_.hi:6.1f}]  covers {e_.covers(int(is_key[m_].sum()))}")
+
+print("\\nexploratory 9a: share of the 181 key errors each judge calls CORRECT (endorses the wrong key)")
+for j, m in enumerate(JUDGE_SHORTS):
+    both = [i for i in ORIG_VERDICT[j] if is_key[i]]
+    if both:
+        o = np.mean([ORIG_VERDICT[j][i] == "CORRECT" for i in both])
+        s_ = np.mean([REDUX_VERDICT[m][i] == "CORRECT" for i in both])
+        print(f"  {m:8s} original order {o:6.1%}   shuffled {s_:6.1%}   (n={len(both)})")
+"""
+
+GO_CELL = """
+# GO / NO-GO, exactly PREREG 8. Nothing here is tunable.
+truth_r = 181
+est_r, union_r = PRIMARY_REDUX.n_hat, data_redux.n_found
+mean_abs_est = float(np.mean([abs(r["n_hat"] - r["truth"]) for r in results]))
+mean_abs_union = float(np.mean([abs(r["union"] - r["truth"]) for r in results]))
+cond = {
+    "a": coverage >= 0.85,
+    "b": PRIMARY_REDUX.covers(truth_r),
+    "c": (truth_r - union_r) / truth_r >= 0.20,
+    "d": abs(est_r - truth_r) <= 0.5 * abs(union_r - truth_r) and mean_abs_est <= 0.5 * mean_abs_union,
+}
+detail = {
+    "a": f"coverage {coverage:.1%} over {len(results)} replicates (need >= 85%)",
+    "b": f"Redux CI [{PRIMARY_REDUX.lo:.1f}, {PRIMARY_REDUX.hi:.1f}] vs 181",
+    "c": f"union finds {union_r}/181, misses {(truth_r - union_r) / truth_r:.1%} (need >= 20%)",
+    "d": f"Redux |est-181| {abs(est_r - truth_r):.1f} vs half |union-181| {0.5 * abs(union_r - truth_r):.1f}; "
+         f"replicates mean |est-266| {mean_abs_est:.1f} vs half mean |union-266| {0.5 * mean_abs_union:.1f}",
+}
+for k in "abcd":
+    print(f"({k}) {'PASS' if cond[k] else 'FAIL'}  {detail[k]}")
+if union_r >= 0.9 * truth_r or not cond["a"] or (not cond["b"] and not cond["d"]):
+    verdict = "NO-GO"
+elif all(cond.values()):
+    verdict = "GO"
+else:
+    verdict = "PARTIAL (failed: " + ", ".join(k for k in "abcd" if not cond[k]) + ")"
+print("\\nreplicates: mean union", np.mean([r["union"] for r in results]),
+      "| unstable share", np.mean([not r["ok"] for r in results]),
+      "| median gof p", np.nanmedian([r["gof_p"] for r in results]))
+print(f"\\nPREREG.md blob {PREREG_COMMIT}")
+print(f"VERDICT: {verdict}")
+with open(os.path.join(DRIVE, "analysis_summary.json"), "w") as fh:
+    json.dump({"verdict": verdict, "conditions": {k: bool(v) for k, v in cond.items()}, "detail": detail,
+               "prereg_blob": PREREG_COMMIT,
+               "redux": [{"name": e.name, "n_hat": e.n_hat, "lo": e.lo, "hi": e.hi, "ok": e.ok, "note": e.note}
+                         for e in REDUX_EST],
+               "replicates": [{k: (v if not isinstance(v, (list, tuple)) else str(v)) for k, v in r.items()}
+                              for r in results]}, fh, indent=1, default=float)
+print("saved analysis_summary.json to Drive")
+"""
+
 REPLICATE_CELL = '''
 # The 200+ injection replicates (PREREG 7). CPU only; parallel over seeds.
 import numpy as np
@@ -648,11 +814,18 @@ exploratory section.
         _code('import detectors\nkey_errors = [i for i, it in enumerate(ITEMS_FULL)\n'
               '              if it["error_type"] in {"wrong_groundtruth", "no_correct_answer", "multiple_correct_answers"}]\n'
               'sample = detectors.original_order_sample(ITEMS_FULL, key_errors, 600)\n'
-              'with open(os.path.join(DRIVE, "original_order_sample.json"), "w") as fh:\n'
-              '    json.dump(sample, fh)\n'
+              '_p = os.path.join(DRIVE, "original_order_sample.json")\n'
+              'if os.path.exists(_p):\n'
+              '    assert sorted(json.load(open(_p))) == sorted(sample), "9a sample on Drive differs"\n'
+              'else:\n'
+              '    json.dump(sample, open(_p, "w"))\n'
               'print(len(sample), "items;", len(key_errors), "key errors included")'),
         _md("## Join truth"),
         _code(ANALYSIS_CELL),
+        _md("## Load detector outputs and build D5"),
+        _code(LOAD_CELL),
+        _md("## Redux arm: the realism test"),
+        _code(REDUX_CELL),
         _md("## Injection replicates: the main calibration test"),
         _code(REPLICATE_CELL),
         _md("""## GO / NO-GO
@@ -667,6 +840,7 @@ Check all four conditions from `PREREG.md` section 8 and write `RESULTS.md`:
 Report every detector's precision and recall, the full 31-cell capture pattern table, every estimator
 with its goodness of fit, the estimated number of errors no detector found with its interval, and the
 audit-cost reading. On NO-GO, name which condition failed."""),
+        _code(GO_CELL),
     ]
     return _notebook(cells, gpu=False)
 
