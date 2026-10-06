@@ -436,7 +436,7 @@ Order of cells: setup, data, work list, resume, judge pass, probability pass, fl
         _md("## Setup\n\nThe first run installs pinned dependencies and then **restarts the runtime on purpose**. "
             "When it reconnects, Run all again: the install is cached and skipped."),
         _code(setup_cell(JUDGE_PINS, ".deps_judge")),
-        _code('EXPECT_VLLM = "0.11.0"\nEXPECT_TRANSFORMERS_MAJOR = "4"\n' + VERSION_CHECK.replace('__DRIVE_ROOT__', DRIVE_ROOT)),
+        _code('EXPECT_VLLM = "0.31.0"\nEXPECT_TRANSFORMERS_MAJOR = "5"\n' + VERSION_CHECK.replace('__DRIVE_ROOT__', DRIVE_ROOT)),
         _code(f'MODEL = "{model}"\nSHORT = "{short}"\nBUDGET_HOURS = {budget}\n'
               '# Mistral-Small-4 ships Mistral-native format only (no config.json), so vLLM\n'
               '# needs the mistral tokenizer/config/load modes. PREREG 3.\n'
