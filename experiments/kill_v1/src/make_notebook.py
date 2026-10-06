@@ -134,6 +134,16 @@ else:
     print("dependencies already installed in this VM:")
     for p in PINS:
         print("  ", p)
+
+# Colab exposes secrets to the kernel only. vLLM loads weights in a spawned
+# engine process, so a gated model (Llama) fails with "Engine core
+# initialization failed" unless the token is in the environment it inherits.
+try:
+    from google.colab import userdata
+    os.environ["HF_TOKEN"] = userdata.get("HF_TOKEN")
+    print("HF_TOKEN exported for the vLLM engine process")
+except Exception as exc:
+    print("no HF_TOKEN secret (fine for ungated models):", type(exc).__name__)
 '''
 
 
