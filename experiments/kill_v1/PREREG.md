@@ -68,14 +68,30 @@ REASON: <at most one short sentence>
 ```
 
 Generation is capped at 24 tokens, temperature 0, the same prompt template for every model, with each
-model's own chat template applied. **The flag rule is fixed now: D flags the item if the parsed verdict is
+model's own chat template applied.
+
+**Options are shown in a shuffled order.** For every item, the four options are permuted by a fixed
+per-item permutation and then relabelled A–D in the new order, so the claimed key moves with its option
+text rather than staying at its original letter. The permutation is drawn once from
+`numpy.random.default_rng([20261006, item_index])`, stored, and used **identically** by every judge, by the
+confident-learning pass, by the injection scoring and by every replicate — so the detectors stay comparable
+and nothing about the shuffle varies between arms.
+
+Why: Gema et al. (§3.1) report that on Professional Law and Formal Logic, model accuracy on *erroneous*
+instances was similar to or higher than on correct ones, and say this "may serve as evidence of
+memorisation, suggesting that these MMLU instances were learned during the models' pretraining processes".
+MMLU answer keys are position-coded A–D and are all over the public internet. A judge that has memorised
+"this question's answer is C" would endorse a wrong key whenever the wrong key happens to sit at C.
+Shuffling breaks position-coded recall. It does **not** break content memorisation; see §12. **The flag rule is fixed now: D flags the item if the parsed verdict is
 `INCORRECT`.** There is no threshold to tune and no score to calibrate. A response that does not parse is
 recorded as `unparsed` and counted as **not flagged**; the unparsed rate is reported per model, and a model
 whose unparsed rate exceeds 5% is reported as broken rather than quietly treated as a detector that flags
 nothing.
 
 **Confident learning (D5).** Each of the four models scores all four options for every item *without seeing
-the key*, giving a probability over the four options. The four models' probabilities are averaged, and
+the key*, giving a probability over the four options. The options are in the same shuffled order as the
+judge prompts, and the probabilities are mapped back to the original option identities before cleanlab sees
+them, so D5 is scored on option *content*, not on letters. The four models' probabilities are averaged, and
 `cleanlab.filter.find_label_issues` is run with `filter_by="prune_by_noise_rate"` and default parameters
 against the claimed key. D5 flags the items cleanlab returns. No parameter is tuned.
 
@@ -145,51 +161,88 @@ not read it. Implementing an estimator from a paper we have not read would be wo
 ## 6. Simulation evidence, recorded before any GPU run
 
 `python src/test_crc.py --out sim.txt` runs seven unit tests (all passing) and the coverage study below:
-**200 replicates per scenario, 200 bootstrap draws, 6 worker processes**, with each scenario row flushed to
-disk as it completes. Monte Carlo standard error on a coverage near 95% is **1.5 percentage points**, so
-treat differences smaller than about 3 points as noise.
+**200 replicates per scenario, 200 bootstrap draws, 6 worker processes**, each scenario row flushed to disk
+as it completes. Monte Carlo standard error on a coverage near 95% is **1.5 percentage points**, so treat
+differences under about 3 points as noise. Raw output: `simulation_coverage.txt`.
 
-Scenarios cover independent detectors, detector-specific rates, heterogeneous item detectability, and the
-project's own failure mode: four judges sharing a latent factor while confident learning stays conditionally
-independent. Each cell is coverage of the 95% interval / median estimate divided by truth. `miss` is the
-share of true errors no detector found. `loglin-par` is the pre-registered primary; `loglin-npar` is the
-same point estimate with a resampling interval, shown only to justify the choice between them.
+Each cell is coverage of the 95% interval / median estimate divided by truth. `miss` is the share of true
+errors no detector found. `loglin-par` is the pre-registered primary. **Bold marks coverage below the 85%
+threshold in §8.**
 
 | scenario | truth | miss | loglin-par | loglin-npar | jackknife | chao | union |
 |---|---|---|---|---|---|---|---|
-| M0 (independent, equal rates) | 181 | 17% | **100% / 1.00** | 96% / 1.00 | 7% / 1.19 | 90% / 1.03 | 0% / 0.83 |
-| Mt (independent, per-detector rates) | 181 | 11% | **100% / 1.00** | 90% / 1.00 | 18% / 1.14 | 86% / 1.03 | 0% / 0.89 |
-| Mh (item detectability varies, sd 1.0) | 181 | 18% | **93% / 0.96** | 90% / 0.96 | 62% / 1.06 | 92% / 0.97 | 0% / 0.82 |
-| Mh-strong (sd 1.8) | 181 | 25% | **90% / 0.94** | 90% / 0.94 | 88% / 0.95 | 60% / 0.87 | 0% / 0.75 |
-| dep-judges (4 judges share a factor, rho 1.5) | 181 | 18% | **99% / 0.96** | 90% / 0.96 | 64% / 1.07 | 93% / 0.97 | 0% / 0.82 |
-| dep-strong (rho 2.5, designed to fail) | 181 | 20% | **100% / 0.97** | 96% / 0.97 | 72% / 1.10 | 96% / 0.98 | 0% / 0.80 |
-| dep-4det (only 4 detectors) | 181 | 20% | **98% / 0.98** | 92% / 0.98 | 59% / 1.11 | 94% / 0.98 | 0% / 0.80 |
-| dep-n266 (injection-sized population) | 266 | 18% | **99% / 0.98** | 90% / 0.98 | 55% / 1.09 | 94% / 0.98 | 0% / 0.82 |
+| M0 (independent, equal rates) | 181 | 17% | 100% / 1.00 | 96% / 1.00 | 7% / 1.19 | 90% / 1.03 | 0% / 0.83 |
+| Mt (independent, per-detector rates) | 181 | 11% | 100% / 1.00 | 90% / 1.00 | 18% / 1.14 | 86% / 1.03 | 0% / 0.89 |
+| Mh (detectability varies, sd 1.0) | 181 | 18% | 93% / 0.96 | 90% / 0.96 | 62% / 1.06 | 92% / 0.97 | 0% / 0.82 |
+| Mh-strong (sd 1.8) | 181 | 25% | 90% / 0.94 | 90% / 0.94 | 88% / 0.95 | 60% / 0.87 | 0% / 0.75 |
+| dep-judges (4 judges share a factor, rho 1.5) | 181 | 18% | 99% / 0.96 | 90% / 0.96 | 64% / 1.07 | 93% / 0.97 | 0% / 0.82 |
+| dep-strong (rho 2.5) | 181 | 20% | 100% / 0.97 | 96% / 0.97 | 72% / 1.10 | 96% / 0.98 | 0% / 0.80 |
+| dep-4det (only 4 detectors) | 181 | 20% | 98% / 0.98 | 92% / 0.98 | 59% / 1.11 | 94% / 0.98 | 0% / 0.80 |
+| **d5-dep** (all 5 load on the factor, rho 1.5) | 181 | 24% | 89% / 0.93 | 89% / 0.93 | 84% / 0.95 | 60% / 0.88 | 0% / 0.76 |
+| **d5-dep-strong** (all 5 load, rho 2.5) | 181 | 30% | 90% / 0.92 | 89% / 0.92 | 55% / 0.86 | 30% / 0.80 | 0% / 0.70 |
+| **invis-15** (15% undetectable) | 181 | 30% | **53% / 0.82** | **46%** / 0.82 | 81% / 0.91 | 42% / 0.83 | 0% / 0.70 |
+| **invis-30** (30% undetectable) | 181 | 42% | **10% / 0.68** | **24%** / 0.68 | 18% / 0.75 | 8% / 0.69 | 0% / 0.59 |
+| **lowrec** (recall 0.17–0.28, union misses 40%) | 181 | 40% | 87% / 0.91 | 92% / 0.91 | 86% / 0.96 | 68% / 0.84 | 0% / 0.60 |
+| **lowrec-d5dep** (low recall, all 5 loaded) | 181 | 43% | **78% / 0.87** | 84% / 0.87 | 39% / 0.81 | 26% / 0.73 | 0% / 0.57 |
+| **worst** (low recall, all 5 loaded, 30% invisible) | 181 | 60% | **45% / 0.58** | 64% / 0.58 | 0% / 0.56 | 2% / 0.51 | 0% / 0.40 |
+| dep-n266 (injection-sized population) | 266 | 18% | 99% / 0.98 | 90% / 0.98 | 55% / 1.09 | 94% / 0.98 | 0% / 0.82 |
 
-What this does and does not establish:
+### The failure boundary
 
-- **The primary estimator holds coverage in every scenario, 90% to 100%, never below the 85% threshold in
-  §8** — including the designed-to-fail case where the four judges share a strong latent factor. That is
-  the result this design needed. Its median estimate runs 0.94–1.00 of truth, so it is mildly conservative
-  under heterogeneity rather than optimistic.
-- **The parametric bootstrap is the right interval, but by a smaller margin than it first appeared.** It is
-  at or above the resampling interval in all eight scenarios and strictly above in six, most clearly under
-  independence (100% against 96% and 90%). An earlier 60-replicate run suggested a gap of 82–93% against
-  90–100%; at 200 replicates the real gap is 90–96% against 90–100%. The choice stands; the strength of the
-  evidence for it was overstated and is corrected here.
-- **The four-detector scenario shows no penalty, contrary to what the small run suggested.** `dep-4det`
-  reaches 98% on the primary estimator, indistinguishable from the five-detector rows. So **our own
-  simulation does not support preferring five detectors over four.** The five-detector design stands on the
-  gate-1 decision and on Briand et al. (2000), who found on real inspection data that accuracy degrades
-  with too few inspectors — an effect this configuration, at these detection rates and this population
-  size, does not reproduce. Stated plainly so nobody later cites our simulation as evidence it does.
-- **The Mh jackknife runs high and its interval is far too narrow** — 7% to 88% coverage, median estimate up
-  to 1.19 of truth. It is reported as a secondary estimator and GO does not depend on it. Recorded now so
-  it is not rediscovered after results.
-- **Chao behaves as a floor**, sitting below truth under heterogeneity (0.87 under Mh-strong, 60% coverage)
-  and slightly above under near-homogeneous capture. It is read as a floor only, never as a point estimate.
-- **The union baseline never covers the truth in any scenario** and misses 11–25% of errors, which is the
-  gap this project exists to close.
+The thresholds in §8 are unchanged. What follows is where the primary estimator stops meeting them, measured
+before any GPU run, so that a failure on real data can be matched against a known cause rather than
+explained after the fact.
+
+**Primary coverage falls below 85% in four of the fifteen scenarios**, and the cause is not detector
+dependence:
+
+| What is varied | Coverage | Verdict |
+|---|---|---|
+| Detector dependence alone, even all 5 detectors on one strong factor (`d5-dep`, `d5-dep-strong`) | 89–90% | **holds** |
+| Low recall alone, union missing 40% (`lowrec`) | 87% | **holds, with little room** |
+| Low recall **and** all 5 detectors dependent (`lowrec-d5dep`) | **78%** | **fails** |
+| 15% of errors undetectable (`invis-15`) | **53%** | **fails** |
+| 30% of errors undetectable (`invis-30`) | **10%** | **fails badly** |
+| All three together (`worst`) | **45%** | **fails** |
+
+Three things follow, and they are the reason these scenarios were added:
+
+1. **Dependence is survivable; invisibility is not.** Making confident learning load on the same latent
+   factor as the four judges — which is the honest model of our design, since D5 is built from those same
+   four models' probabilities — costs about 10 points of coverage and pulls the median estimate to 0.93 of
+   truth, but coverage stays at 89–90%. By contrast, a 15% invisible subpopulation cuts coverage to 53% and
+   30% cuts it to 10%. **The assumption that every error has some chance of being detected is the one that
+   matters**, and no amount of estimator sophistication substitutes for it. This is the known limitation in
+   §11a item 4, now quantified.
+2. **Low recall and dependence interact.** Either alone is survivable (87%, 89%); together they give 78%.
+   The real experiment will sit somewhere in this region, since D5 genuinely is not independent and judge
+   recall on subtle key errors may well be low. **A coverage failure on the injection arm should be read
+   first as this interaction, not as a bug.**
+3. **Every estimator degrades the same way, so no fallback rescues it.** Under `worst` the jackknife covers
+   0%, Chao 2%, the union 0%. Where the primary fails, the secondaries fail harder. There is no estimator
+   in this file that can be swapped in after a bad result to recover a GO, and that is stated now so nobody
+   tries.
+
+The direction of failure is also worth recording: the primary estimator's median ratio never exceeds 1.00
+in any of the fifteen scenarios and falls to 0.58 in the worst. **It underestimates when it breaks, it does
+not overestimate.** A GO result is therefore conservative; a NO-GO may mean either that the method does not
+work or that the benchmark contains errors nothing can see.
+
+### Other readings
+
+- The parametric bootstrap is the right interval but by a modest margin: at or above the resampling
+  interval in eleven of fifteen scenarios and clearly better under independence (100% against 96% and 90%).
+  In three of the four failing scenarios the resampling interval is *less* bad (`invis-30` 24% against 10%,
+  `worst` 64% against 45%), but both are far below any usable threshold there, so this does not change the
+  choice. An earlier 60-replicate run suggested a gap of 82–93% against 90–100%; the real gap is smaller
+  and is corrected here.
+- **The four-detector scenario shows no penalty** (98%), contrary to what the small run suggested, so our
+  own simulation does not support preferring five detectors over four. The five-detector design stands on
+  the gate-1 decision and on Briand et al. (2000).
+- **The Mh jackknife is unusable as a point estimate**: 0–88% coverage, median up to 1.19 of truth. It runs
+  high in easy scenarios and collapses in hard ones. Secondary only; GO does not depend on it.
+- **Chao behaves as a floor** and degrades fast under dependence (30% coverage under `d5-dep-strong`).
+- **The union never covers the truth in any of the fifteen scenarios**, missing 11–60%.
 
 ## 7. The injection experiment (the main calibration test)
 
@@ -262,7 +315,7 @@ failing condition named — not quietly upgraded to GO.
 - on NO-GO, which of (a)–(d) failed and the most likely reason, written up as a public negative result in the
   style of the previous project.
 
-## 9. Contamination control
+## 9. Contamination and memorisation control
 
 MMLU-Redux first appeared on arXiv on **2024-06-06**. A model whose weights were uploaded before that date
 cannot have memorised the corrections.
@@ -283,28 +336,81 @@ Swapping it in for any other reason is not permitted.
   `meta-llama/Llama-3.1-8B-Instruct` (2024-07-18) on the Redux pass and a fixed 1,500-item injection
   subsample. If the newer models flag the Redux errors much better than the old ones but are no better on
   the injected errors, that is contamination, and it is reported as such.
+
+### 9a. Exploratory: does option order matter? (600-item original-order check)
+
+Shuffling is the pre-registered default, so the main run gives no direct evidence about position-coded
+memorisation. To get that evidence, the four judges are additionally run **in the original MMLU option
+order** on a fixed sample of **600 items**: **all 181 Redux key errors**, plus 419 further items drawn
+stratified by MMLU supercategory from the rest, with seed `20261006`. That is 2,400 extra prompts in total
+(600 x 4 judges), run inside the judge notebooks while the weights are already loaded.
+
+Reported: for each judge, the share of Redux key errors it endorses (says `CORRECT`) in original order
+against shuffled order, overall and for Professional Law and Formal Logic separately, since those are the
+two subjects Gema et al. single out. A materially higher endorsement rate in original order is evidence of
+position-coded memorisation.
+
+**This is exploratory and is not part of GO.** It cannot change the primary analysis, which always uses the
+shuffled order.
+
+### 9b. Exploratory: what do modern judges still miss?
+
+Not part of GO, and not a detector in the estimator. The question is narrow: **what share of the 181 Redux
+key errors does the union of two current frontier-class open models miss?** If strong recent models still
+miss a large share, the problem this project addresses is not an artefact of using small 2024 models.
+Contamination can only make these models look *better*, so a large miss rate is a conservative result and a
+small one proves nothing — stated now so the outcome cannot be over-read in either direction.
+
+| Model | Verified on the Hub 2026-10-07 | Notes |
+|---|---|---|
+| `Qwen/Qwen3.8-27B-FP8` | uploaded 2026-08-13, apache-2.0, ungated, 30.9 GB of weights | **Not text-only.** The id the author gave does exist, but it is `image-text-to-text` (`Qwen3_5ForConditionalGeneration`, `language_model_only: false`, a vision tower and a video preprocessor). We use it text-only by never passing an image; the model itself is multimodal. Every Qwen 27B in this generation is multimodal, and the bf16 `Qwen/Qwen3.8-27B` is 55.6 GB, so this FP8 build is the only one that fits at all. |
+| `google/gemma-4-31B-it-qat-w4a16-ct` | uploaded 2026-06-04, apache-2.0, ungated, 23.3 GB of weights | Different family, as asked. W4A16 is weight-only INT4, which runs natively on Ampere through Marlin kernels, so it is the lower-risk of the two. |
+
+**Two risks to settle at the smoke test, not by assumption.** The Colab A100 is 40 GB and Ampere (SM80),
+which has **no native FP8**: vLLM must fall back to a weight-only W8A16 path for the Qwen model, and 30.9 GB
+of weights on a 40 GB card leaves under 9 GB for KV cache and activations. If the Qwen model fails to load
+or runs out of memory, the **pre-registered fallback is to run this arm with the Gemma model alone and
+report that**, rather than substituting a model chosen after the fact. The arm is exploratory and is first
+in the cut order (§10).
+
+Protocol: the same judge prompt, the same shuffled option order, **Redux pass only** (5,700 items each, no
+injection scoring). Reported: per model and for the union of the two, recall on the 181 key errors, the
+share missed, and the flag rate on `ok` items for context.
 - Expert labels are joined to detector outputs only in the analysis notebook, after this file is committed.
 
 ## 10. Compute
 
-Measured against the hard stop of 7 A100-hours in `PLAN.md`. Prompt counts: **16,360 per judge**
-(5,700 Redux + 10,660 injection scoring), **65,440** across the four judges. D5 adds no session, because the
+Measured against the hard stop of 7 A100-hours in `PLAN.md`. The Colab A100 is **40 GB, Ampere (SM80)**.
+Prompt counts: **16,360 per judge** (5,700 Redux + 10,660 injection scoring), **65,440** across the four
+judges, plus 2,400 for the original-order check (§9a) and 11,400 for the modern arm (§9b). Option shuffling
+adds **no** prompts — it changes prompt content, not prompt count. D5 adds no session, because the
 option-probability pass runs in the judge notebook while the weights are loaded, and those probabilities do
 not depend on the answer key, so one pass serves the Redux analysis and every injection replicate.
 
 | Step | If it works | Worst case |
 |---|---|---|
 | Smoke test: every notebook on 50 items | 0.4 | 0.8 |
-| 4 judge notebooks in parallel, 16,360 prompts each, plus option probabilities for D5 | 2.1 | 3.4 |
-| Contamination check, 2 newer models (Redux pass + 1,500-item injection subsample) | 0.5 | 1.0 |
+| 4 judge notebooks in parallel: 16,360 prompts each, option probabilities for D5, and the 2,400-prompt original-order check (§9a) | 2.2 | 3.5 |
+| Contamination check, 2 newer small models (§9) | 0.5 | 1.0 |
+| Modern judges arm, 2 large models in one session, Redux pass only (§9b) | 1.0 | 1.8 |
 | 6th detector from another family, only if dependence is extreme | 0 | 0.6 |
 | Analysis, all 200+ replicates and all bootstraps | CPU High-RAM, 0 | 0 |
-| **Total** | **3.0** | **5.8** |
+| **Total** | **4.1** | **7.7** |
 
-Worst case leaves about 1.2 hours of margin under the hard stop, so **there is no trim rule**: the design
-runs as written or not at all. Each notebook still reports measured prompts per second at the end of its
-smoke test, as a check that the projection above holds; if the projection for the four judge notebooks
-exceeds 4.5 A100-hours, stop and report rather than quietly cutting scope.
+**Expected 4.1 fits with room. The uncut worst case, 7.7, does not.** So the cut order is pre-registered
+here and triggers on the *measured running total*, not on anything a result says:
+
+1. **Cut the modern judges arm (§9b) first** — saves up to 1.8. It is exploratory, it is not a detector,
+   and it cannot change the primary analysis.
+2. **Then cut the 600-item original-order check (§9a)** — saves up to 0.1.
+3. Then cut the contamination check (§9) — saves up to 1.0.
+
+With step 1 applied the worst case is **5.9**, inside the stop. The 6th-detector row is only reached if the
+observed detector dependence is extreme, and if reaching it would pass 7 hours, stop and report instead.
+
+Each notebook reports measured prompts per second at the end of its smoke test, as a check that the
+projection above holds. If the four judge notebooks project past 4.5 A100-hours between them, stop and
+report rather than quietly cutting scope beyond the order above.
 
 Stop and report if the experiment passes 7 A100-hours, whatever state it is in.
 
@@ -315,10 +421,38 @@ Labelled as exploratory wherever they appear, and never used to support the main
 - detector flags on items MMLU-Redux labelled `ok` (§2);
 - anything about the 32 `expert` items;
 - the newer-model contamination comparison (§9);
+- the 600-item original-order check (§9a);
+- the modern judges arm (§9b);
 - the four supercategory estimates (§8);
 - the secondary truth (any non-`ok` error type);
 - the "how many detectors are enough" curve obtained by re-running the estimators on detector subsets;
 - any estimator, threshold or stratification not named in this file.
+
+## 11a. Known limitations
+
+Stated in advance so they are not presented later as discoveries.
+
+1. **Shuffling does not stop content memorisation.** Relabelling the options defeats position-coded recall
+   ("the answer is C"), which is what Gema et al.'s Professional Law and Formal Logic finding points at.
+   It does nothing about a model that has memorised the *text* of the original answer. A judge that
+   remembers "the answer to this question is 'strict liability'" will still endorse that option wherever it
+   now sits. The only real controls for that are the pre-June-2024 model cutoffs (§9) and the injected
+   errors, which no model can have seen. Residual content memorisation stays an unquantified limitation of
+   the Redux arm, and is one more reason the injection arm, not the Redux arm, carries the GO rule.
+2. **MMLU-Redux is one imperfect annotation pass**, so the Redux arm is a realism test rather than an
+   exact-truth test (§2).
+3. **D5 is not independent of D1–D4.** Confident learning is built from the same four models' option
+   probabilities, so the design has four model families, not five independent detectors. The simulation
+   (§6) therefore includes scenarios where all five detectors load on the same latent factor.
+4. **The invisible-error assumption is untestable on real data, and it is the assumption that matters.**
+   If a share of real label errors is undetectable by every detector we have, no capture-recapture method
+   can recover them, and the estimate is a floor on an unknown quantity rather than the total. §6 now
+   quantifies how fast this kills the method: **15% invisible drops primary coverage to 53%, 30% drops it
+   to 10%**, while even putting all five detectors on one strong shared factor still leaves 90%. Nothing in
+   this design can measure that share on MMLU-Redux, so a NO-GO cannot distinguish "the method does not
+   work" from "this benchmark contains errors nothing can see". Said plainly in advance.
+5. **One benchmark, one language, four-option multiple choice.** Nothing here establishes that the method
+   transfers to other benchmark formats.
 
 ## 12. What would invalidate the run
 

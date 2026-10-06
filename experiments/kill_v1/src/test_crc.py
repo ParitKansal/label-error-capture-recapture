@@ -18,10 +18,20 @@ Two jobs:
 
 from __future__ import annotations
 
+import os
+
+# Must be set before numpy is imported. Each worker process otherwise starts its
+# own BLAS thread pool, and 6 workers x N threads on a small machine spend more
+# time contending than computing: the first attempt at this study ran about four
+# times slower than a single-process benchmark predicted. Every fit here is tiny
+# (a 31 x 16 design matrix), so threaded BLAS buys nothing anyway.
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_v, "1")
+
 import argparse
 import itertools
 import multiprocessing as mp
-import os
 import sys
 from dataclasses import dataclass
 from fractions import Fraction
@@ -258,8 +268,54 @@ class DependentJudges(Scenario):
         return (rng.random((self.n_true, self.n_detectors)) < prob).astype(np.int8)
 
 
+@dataclass
+class Realistic(Scenario):
+    """The hard cases: D5 is not independent, some errors are invisible, recall is low.
+
+    `loadings` is the per-detector loading on one shared latent item factor. In
+    this project's actual design confident learning (D5) is built from the same
+    four models' option probabilities, so it is NOT conditionally independent of
+    the judges: loading it at or near 1.0 is the honest configuration, and
+    loading it at 0 is the optimistic one.
+
+    `invisible` is the share of true errors with near-zero detectability for
+    every detector. No capture-recapture method can see these: they are the
+    assumption-violation that breaks the approach rather than a noise source,
+    and the point of including them is to find where coverage dies.
+    """
+
+    p: tuple[float, ...] = ()
+    loadings: tuple[float, ...] = ()
+    rho: float = 1.5
+    sd: float = 0.6
+    invisible: float = 0.0
+    invisible_p: float = 0.002
+
+    def draw(self, rng):
+        k = self.n_detectors
+        n_inv = int(round(self.n_true * self.invisible))
+        n_vis = self.n_true - n_inv
+        base = np.log(np.array(self.p) / (1 - np.array(self.p)))
+        loading = np.array(self.loadings, dtype=float)
+        out = np.zeros((self.n_true, k), dtype=np.int8)
+        if n_vis:
+            factor = rng.normal(0.0, self.rho, size=(n_vis, 1))
+            noise = rng.normal(0.0, self.sd, size=(n_vis, 1))
+            eta = base[None, :] + factor * loading[None, :] + noise
+            prob = 1 / (1 + np.exp(-eta))
+            out[:n_vis] = (rng.random((n_vis, k)) < prob).astype(np.int8)
+        if n_inv:
+            out[n_vis:] = (rng.random((n_inv, k)) < self.invisible_p).astype(np.int8)
+        return out
+
+
 def scenarios(kill_sizes=(181, 266)) -> list[Scenario]:
     five = (0.40, 0.35, 0.30, 0.25, 0.45)
+    # calibrated so realised per-detector recall lands in 0.15-0.35 and the
+    # union misses 40-60% of true errors, the regime this project actually faces
+    low = (0.18, 0.17, 0.16, 0.15, 0.15)
+    all_loaded = (1.0, 1.0, 1.0, 1.0, 1.0)
+    judges_only = (1.0, 1.0, 1.0, 1.0, 0.0)
     out = [
         Independent(
             "M0", "independent detectors, equal detectability", 181, 5, p=(0.30,) * 5
@@ -281,13 +337,44 @@ def scenarios(kill_sizes=(181, 266)) -> list[Scenario]:
         ),
         DependentJudges(
             "dep-strong",
-            "judges strongly dependent (rho 2.5) -- the designed-to-fail case",
+            "judges strongly dependent (rho 2.5), CL independent",
             181, 5, p=five, n_judges=4, rho=2.5,
         ),
         DependentJudges(
             "dep-4det",
-            "only 4 detectors, 3 dependent judges -- Briand et al. 2000 warning",
+            "only 4 detectors, 3 dependent judges",
             181, 4, p=(0.40, 0.35, 0.30, 0.45), n_judges=3, rho=1.5,
+        ),
+        # --- D5 is not independent: it is built from the same four models ---
+        Realistic(
+            "d5-dep", "all 5 detectors load on the shared factor (rho 1.5)",
+            181, 5, p=five, loadings=all_loaded, rho=1.5,
+        ),
+        Realistic(
+            "d5-dep-strong", "all 5 load, strong shared factor (rho 2.5)",
+            181, 5, p=five, loadings=all_loaded, rho=2.5,
+        ),
+        # --- an invisible subpopulation no detector can reach ---
+        Realistic(
+            "invis-15", "15% of errors near-undetectable by every detector",
+            181, 5, p=five, loadings=judges_only, rho=1.5, invisible=0.15,
+        ),
+        Realistic(
+            "invis-30", "30% of errors near-undetectable by every detector",
+            181, 5, p=five, loadings=judges_only, rho=1.5, invisible=0.30,
+        ),
+        # --- realistic low recall ---
+        Realistic(
+            "lowrec", "every detector 0.15-0.35, judges dependent, CL independent",
+            181, 5, p=low, loadings=judges_only, rho=1.5,
+        ),
+        Realistic(
+            "lowrec-d5dep", "low recall and all 5 detectors loaded",
+            181, 5, p=low, loadings=all_loaded, rho=2.0,
+        ),
+        Realistic(
+            "worst", "low recall, all 5 loaded, 30% invisible -- designed to fail",
+            181, 5, p=low, loadings=all_loaded, rho=2.0, invisible=0.30,
         ),
     ]
     for n in kill_sizes:
