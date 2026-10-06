@@ -1,0 +1,1 @@
+Qwen/Qwen3.8-27B-FP8	smoke_check	unparsed rate 9.6% is above the 5% limit (PREREG 12). The prompt or the parser does not fit this model. Do not treat it as a detector that flags nothing.
