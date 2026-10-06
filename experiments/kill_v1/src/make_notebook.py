@@ -623,7 +623,7 @@ P = P / P.sum(axis=1, keepdims=True)
 def d5_flags(labels):
     from cleanlab.filter import find_label_issues
     return find_label_issues(labels=np.asarray(labels), pred_probs=P,
-                             filter_by="prune_by_noise_rate").astype(np.int8)
+                             filter_by="prune_by_noise_rate", n_jobs=1).astype(np.int8)
 
 def build_flag_matrix(flipped_key):
     # (N, 5) flags for a benchmark whose keys are ANS except the flipped items (PREREG 7.4)
