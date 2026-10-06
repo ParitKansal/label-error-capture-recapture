@@ -1,8 +1,8 @@
 # Literature
 
-Novelty status and verified closest work: `NOVELTY.md`. Raw novelty-check notes: `novelty_checks/`.
+Novelty status and verified closest work: `NOVELTY.md`.
 
-Verification rule (CLAUDE.md): nothing goes in this table until the record has been opened. Every row below was
+Verification rule: nothing goes in this table until the record has been opened. Every row below was
 checked on 2026-10-06 against the source named in the "verified via" column — arXiv API (`export.arxiv.org/api/query`),
 Crossref (`api.crossref.org/works/<doi>`), OpenAlex, the ACL Anthology page, or the publisher/CRAN page itself.
 "Read" says how much of the paper has actually been read so far, so the reading state is never overstated.
@@ -41,7 +41,7 @@ Crossref (`api.crossref.org/works/<doi>`), OpenAlex, the ACL Anthology page, or 
 | Confident Learning: Estimating Uncertainty in Dataset Labels | Curtis G. Northcutt, Lu Jiang, Isaac L. Chuang | Journal of Artificial Intelligence Research (JAIR), 2021 (arXiv journal_ref); arXiv 1911.00068 (v1 2019-10-31, v5 2022-08-22) | https://arxiv.org/abs/1911.00068 | arXiv API | The method behind `cleanlab.filter.find_label_issues`, which is detector D5. This is a **different paper** from the NeurIPS D&B one in row 2; the pre-registration cites this one for the method and row 2 for the "at least 3.3%" framing. |
 | Small Sample Inference for Two-way Capture Recapture Experiments | Louis-Paul Rivest, Mamadou Yauck | arXiv 2307.11705 (v1 2023-07-21, v2 2024-02-28); no journal_ref | https://arxiv.org/abs/2307.11705 | arXiv API | Already added in phase 0; it is also how `PREREG.md` cites the Chapman estimator, since Chapman (1951) could not be located. |
 
-## References named in PLAN.md that are NOT yet verified
+## References that could not be verified
 
 - **Chapman (1951)**, "Some properties of the hypergeometric distribution with applications to zoological sample
   censuses", University of California Publications in Statistics 1:131–160. Not in Crossref, not in OpenAlex, no

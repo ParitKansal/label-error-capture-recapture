@@ -1,4 +1,4 @@
-# Capture–recapture estimate of the total number of label errors in a benchmark — novelty status
+# Novelty check: capture–recapture for the total number of label errors in a benchmark
 
 Idea: treat each automated label-error detector (LLM judges from different families, confident learning, IRT residuals,
 cross-model disagreement) as one capture occasion; use multiple-systems estimation (Lincoln–Petersen, log-linear models
@@ -6,9 +6,9 @@ with list dependence, Chao's lower bound / Mh models) to estimate the TOTAL numb
 including errors no detector found, with a CI. Validate on expert re-annotations (MMLU-Redux) and injected errors.
 
 ## Verdict: NOT FOUND (three independent checks)
-1. arXiv + OpenReview agent (2026-10-05): NOT FOUND — see `novelty_checks/A_arxiv_openreview_C4.md`.
-2. Semantic Scholar + web agent (2026-10-05), incl. all 773 citers of Northcutt 2021: NOT FOUND — `novelty_checks/B_s2_scholar_C4.md`.
-3. Gemini Deep Research (2026-10-06): NOT FOUND — raw report in `novelty_checks/C_gemini_deep_research_summary.md`.
+1. arXiv + OpenReview agent (2026-10-05): NOT FOUND.
+2. Semantic Scholar + web agent (2026-10-05), incl. all 773 citers of Northcutt 2021: NOT FOUND.
+3. Gemini Deep Research (2026-10-06): NOT FOUND.
 
 ## Closest work (all references verified 2026-10-06; Gemini errors corrected)
 | Paper | Verified venue | What it does | Difference |
@@ -22,8 +22,7 @@ including errors no detector found, with a CI. Validate on expert re-annotations
 | Briand, El Emam, Freimut & Laitenberger (2000), "A comprehensive evaluation of capture-recapture models for estimating software defect content", IEEE TSE, doi 10.1109/32.852741 | IEEE TSE 2000 (Gemini wrongly said El Emam 2001) | Robustness of estimators for inspection data | Same as above |
 | Difallah, Filatova & Ipeirotis (2018), "Demographics and Dynamics of Mechanical Turk Workers", WSDM, doi 10.1145/3159652.3159661 | WSDM 2018 | Capture–recapture for crowd-worker population size | Different population |
 
-## Main risks (from all checks + the occupancy kill experiment lesson)
+## Main risks identified before the experiments
 1. **Detector dependence** (all LLMs miss the same subtle errors) → underestimate. Need ≥3 detectors from different families and log-linear interaction terms; Chao lower bound as a robust floor.
-2. **False-positive flags** (the failure mode that sank the occupancy audit) → captures must be *verified* errors: verify flagged items only (expert labels in MMLU-Redux), or model false positives explicitly.
+2. **False-positive flags** → captures must be *verified* errors: verify flagged items only (expert labels in MMLU-Redux), or model false positives explicitly.
 3. **Heterogeneous detectability** (typos vs subtle reasoning errors) → Mh / covariate (Huggins) models.
-4. Reviewer view: "known statistics, applied" → needs a headline (e.g., benchmark X has 2x more errors than reported) and a validated audit protocol.

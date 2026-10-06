@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: "If you build on this idea or these results, please cite it as below."
+title: "How Many Label Errors Are Left? Capture-Recapture for Counting the Benchmark Errors Nobody Found"
+type: software
+authors:
+  - family-names: Kansal
+    given-names: Parit
+    website: "https://paritkansal.in"
+repository-code: "https://github.com/ParitKansal/label-error-capture-recapture"
+url: "https://github.com/ParitKansal/label-error-capture-recapture"
+date-released: 2026-10-06
+version: "1.0.0"
+license: MIT
+abstract: >-
+  Tests whether capture-recapture (multiple-systems estimation) over several automated label-error detectors can
+  estimate the total number of wrong answer keys in a benchmark, including those no detector found. Two pre-registered
+  experiments on MMLU-Redux (181 expert-confirmed key errors) and 200 sets of 266 planted errors. With 2024-era LLM
+  judges the detectors flagged most of the benchmark and found 94.5% of errors, so the estimate (181.9) had nothing to
+  add: NO-GO. With current open judges and a 5% flagging budget the detectors missed 45%; the estimator's intervals
+  covered the truth in 97% of trials but were too wide, and its point estimates further from the truth than the raw
+  count: PARTIAL. Also finds that current LLM judges miss about a third of known errors, that confident learning
+  out-performs LLM judges, and that planted errors are far easier to detect than real ones.
+keywords:
+  - label errors
+  - benchmark auditing
+  - capture-recapture
+  - multiple-systems estimation
+  - LLM-as-a-judge
+  - confident learning
+  - MMLU
+  - negative result
+  - pre-registration
