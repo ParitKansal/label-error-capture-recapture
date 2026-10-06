@@ -81,19 +81,89 @@ def _embed(src_dir: str, name: str) -> dict:
 
 # --------------------------------------------------------------------------
 
-SETUP = f'''
-import time
+# Two incompatible environments, one per notebook kind. They must never be mixed
+# in one session.
+#
+# Judges (vLLM 0.11.0): Colab now ships transformers 5, and vLLM 0.11.0 fails at
+# LLM() with "TokenizersBackend has no attribute all_special_tokens_extended".
+# 0.11.0 needs the transformers 4 tokenizer API, so it is pinned below 5.
+#
+# Modern arm (vLLM 0.31.0): Qwen3.8 and Gemma 4 are 2026 architectures that
+# vLLM 0.11.0 does not know at all, so that arm needs a current vLLM -- which in
+# turn requires transformers >= 5.10.4. Verified against v0.31.0's
+# requirements/common.txt, registry.py and docs/models/supported_models.md.
+JUDGE_PINS = [
+    "vllm==0.11.0",
+    "transformers>=4.56,<5",
+    "huggingface_hub>=0.26,<1.0",
+]
+MODERN_PINS = [
+    "vllm==0.31.0",
+    "transformers>=5.10.4,<5.18.0",
+    "huggingface_hub>=1.31.0",
+]
+
+
+def setup_cell(pins: list[str], marker: str) -> str:
+    """Install pinned dependencies, then restart the runtime exactly once.
+
+    The restart is required, not cosmetic: Colab has already imported its own
+    transformers by the time this runs, so a new version only takes effect in a
+    fresh process. The marker file lives in /content, which survives a runtime
+    restart but not a new VM, so the install happens once per machine and the
+    restart cannot loop.
+    """
+    quoted = ", ".join(f'"{p}"' for p in pins)
+    return f'''
+import os, subprocess, sys, time
 T_SESSION = time.time()   # Colab bills session time, so the clock starts here
-# Colab A100 40GB, Ampere (SM80). Pinned so a vLLM release cannot change the run.
-!pip -q install "vllm==0.11.0" "huggingface_hub>=0.26" 2>&1 | tail -2
-import os, torch
-print("GPU:", torch.cuda.get_device_name(0))
-print("capability:", torch.cuda.get_device_capability(0), "(8,0) = Ampere, no native FP8")
+
+PINS = [{quoted}]
+MARKER = "/content/{marker}"
+
+if not os.path.exists(MARKER):
+    print("installing pinned dependencies, this takes a few minutes...")
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", *PINS], check=True)
+    with open(MARKER, "w") as fh:
+        fh.write(" ".join(PINS))
+    print("\\nDependencies installed. RESTARTING THE RUNTIME NOW -- this is expected,")
+    print("not a crash. When it reconnects, just Run all again: the install is")
+    print("cached and this cell will skip straight past it.")
+    os.kill(os.getpid(), 9)
+else:
+    print("dependencies already installed in this VM:")
+    for p in PINS:
+        print("  ", p)
+'''
+
+
+VERSION_CHECK = '''
+# Fail loudly here rather than deep inside LLM().
+import importlib.metadata as md
+import torch
+
+for pkg in ("vllm", "transformers", "huggingface_hub", "tokenizers", "torch"):
+    try:
+        print(f"  {pkg:17s} {md.version(pkg)}")
+    except Exception:
+        print(f"  {pkg:17s} NOT INSTALLED")
+
+vllm_v = md.version("vllm")
+tf_v = md.version("transformers")
+assert vllm_v == EXPECT_VLLM, f"expected vllm {EXPECT_VLLM}, got {vllm_v}. Restart the runtime and Run all again."
+assert tf_v.split(".")[0] == EXPECT_TRANSFORMERS_MAJOR, (
+    f"expected transformers {EXPECT_TRANSFORMERS_MAJOR}.x, got {tf_v}. "
+    "Delete the marker file in /content and Run all again.")
+
+print("\\nGPU:", torch.cuda.get_device_name(0))
+cap = torch.cuda.get_device_capability(0)
+print("capability:", cap, "-- (8, 0) is Ampere/A100: no native FP8, vLLM uses the Marlin weight-only path")
 print("memory GB:", round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1))
+assert cap[0] >= 8, f"this run needs an A100 (capability 8.0); got {cap}. Stop and pick a different runtime."
 
 from google.colab import drive
 drive.mount("/content/drive")
-DRIVE = "{DRIVE_ROOT}"
+DRIVE = "__DRIVE_ROOT__"
 os.makedirs(DRIVE, exist_ok=True)
 print("drive ready:", DRIVE)
 '''
@@ -319,7 +389,10 @@ Order of cells: setup, data, work list, resume, judge pass, probability pass, fl
 """
     cells = [
         _md(head),
-        _code(SETUP),
+        _md("## Setup\n\nThe first run installs pinned dependencies and then **restarts the runtime on purpose**. "
+            "When it reconnects, Run all again: the install is cached and skipped."),
+        _code(setup_cell(JUDGE_PINS, ".deps_judge")),
+        _code('EXPECT_VLLM = "0.11.0"\nEXPECT_TRANSFORMERS_MAJOR = "4"\n' + VERSION_CHECK.replace('__DRIVE_ROOT__', DRIVE_ROOT)),
         _code(f'MODEL = "{model}"\nSHORT = "{short}"\nBUDGET_HOURS = {budget}\n'
               f'print(MODEL, "| smoke-check budget", BUDGET_HOURS, "session hours")'),
         _embed(src_dir, "detectors.py"),
@@ -442,7 +515,11 @@ continues with the other one -- it does **not** substitute a different model.
 """
     cells = [
         _md(head),
-        _code(SETUP),
+        _md("## Setup\n\nThis arm needs a **different environment** from the judge notebooks: vLLM 0.31.0 and "
+            "transformers 5. Never run it in a session that has run a judge notebook. The first run installs "
+            "and then **restarts the runtime on purpose**; Run all again when it reconnects."),
+        _code(setup_cell(MODERN_PINS, ".deps_modern")),
+        _code('EXPECT_VLLM = "0.31.0"\nEXPECT_TRANSFORMERS_MAJOR = "5"\n' + VERSION_CHECK.replace('__DRIVE_ROOT__', DRIVE_ROOT)),
         _code(f"MODERN_MODELS = [\n    {models},\n]\nfor m in MODERN_MODELS: print(m[0], '| budget', m[3], 'h')"),
         _embed(src_dir, "detectors.py"),
         _code(DATA_CELL),

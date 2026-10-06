@@ -25,6 +25,24 @@ prints DONE**.
 Step 2 is four **separate Colab sessions running at the same time**, one per notebook. They do not talk to
 each other; they write to different files on the same Drive folder.
 
+## Environments: the judges and the modern arm are NOT the same
+
+| | vLLM | transformers | huggingface_hub |
+|---|---|---|---|
+| the four judge notebooks | `0.11.0` | `>=4.56,<5` | `>=0.26,<1.0` |
+| `modern_arm.ipynb` | `0.31.0` | `>=5.10.4,<5.18.0` | `>=1.31.0` |
+
+These two are mutually incompatible, so **never run the modern arm in a session that has run a judge
+notebook**, or the other way round. Each notebook installs its own pins, writes a marker file in
+`/content`, and then **restarts the runtime on purpose** — that restart is expected, not a crash. When it
+reconnects, just Run all again: the install is cached and the setup cell skips straight past it. A version
+check cell then prints what is actually installed and fails loudly if it is wrong.
+
+Why: Colab ships transformers 5, and vLLM 0.11.0 fails at `LLM()` with
+`TokenizersBackend has no attribute all_special_tokens_extended` because it needs the transformers 4
+tokenizer API. The modern arm has the opposite problem — Qwen3.8 and Gemma 4 are 2026 architectures that
+vLLM 0.11.0 does not know at all, and a current vLLM requires transformers 5.
+
 ## Before you start
 
 1. **Hugging Face token for Llama.** `meta-llama/Meta-Llama-3-8B-Instruct` is gated. Accept the licence on
