@@ -250,6 +250,27 @@ def test_bottom_k_and_self_confidence():
     return "D4 flags the least-confident items, exactly 285 of them"
 
 
+def test_prompt_asks_for_a_bare_verdict_and_prefill_is_set():
+    items = _fake_items(5)
+    rows = D.build_work_list(items, set())
+    prompt, _ = D.render_row(rows[0], items[rows[0].item_index])
+    assert "first word you write is the verdict" in prompt
+    assert "Do not think out loud" in prompt
+    assert D.VERDICT_PREFILL == "VERDICT:"
+    # the prefill plus a bare verdict word must parse
+    assert D.parse_verdict(D.VERDICT_PREFILL + " INCORRECT") == D.INCORRECT
+    assert D.parse_verdict(D.VERDICT_PREFILL + " CORRECT") == D.CORRECT
+    return "the prompt asks for a bare verdict and the prefill makes it the first token"
+
+
+def test_first_token_is_verdict_guard():
+    assert D.first_token_is_verdict({"INCORRECT": -0.1, "CORRECT": -2.0})
+    assert D.first_token_is_verdict({" correct": -0.2})
+    # a thinking model emitting reasoning instead -> caught
+    assert not D.first_token_is_verdict({"Let": -0.1, "<think>": -0.3, "We": -1.2})
+    return "a thinking model that never reaches a verdict is caught before the real pass"
+
+
 def test_thinking_is_switched_off_for_every_judge():
     assert D.thinking_kwargs("Qwen/Qwen3.8-27B-FP8") == {"enable_thinking": False}
     assert D.thinking_kwargs("mistralai/Mistral-Small-4-119B-2603-NVFP4") == {"reasoning_effort": "none"}
@@ -278,6 +299,8 @@ TESTS = [
     test_unscored_items_are_never_flagged_first,
     test_bottom_k_and_self_confidence,
     test_thinking_is_switched_off_for_every_judge,
+    test_prompt_asks_for_a_bare_verdict_and_prefill_is_set,
+    test_first_token_is_verdict_guard,
 ]
 
 

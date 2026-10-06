@@ -186,13 +186,14 @@ def original_order_sample(items: list[dict], key_error_indices: list[int], n_tot
 JUDGE_INSTRUCTION = (
     "You are checking a multiple-choice exam question for errors in its answer key.\n"
     "Decide whether the claimed answer is the correct answer to the question.\n"
-    "Answer with the verdict first, in exactly this format:\n"
-    "VERDICT: CORRECT\n"
-    "REASON: <at most one short sentence>\n"
-    "or\n"
-    "VERDICT: INCORRECT\n"
-    "REASON: <at most one short sentence>"
+    "Reply with exactly one word after VERDICT: either CORRECT or INCORRECT.\n"
+    "Do not explain. Do not think out loud. The first word you write is the verdict."
 )
+
+# The assistant turn is prefilled with this, so the FIRST generated token is the
+# verdict word itself and its logprobs give P(INCORRECT) directly (PREREG 4).
+# Without the prefill the first token would be "VERD", which carries no signal.
+VERDICT_PREFILL = "VERDICT:"
 
 
 def judge_prompt(question: str, options: list[str], claimed_letter: str) -> str:
@@ -202,6 +203,16 @@ def judge_prompt(question: str, options: list[str], claimed_letter: str) -> str:
         lines.append(f"{letter}. {str(text).strip()}")
     lines += ["", f"Claimed answer: {claimed_letter}", ""]
     return "\n".join(lines)
+
+
+def first_token_is_verdict(token_logprobs: dict[str, float]) -> bool:
+    """True when a verdict word is among the first token's candidates.
+
+    The notebook runs this on 8 items before the real pass. v1 lost its Qwen3.8
+    arm to a thinking model that never reached a verdict; this catches that in
+    seconds instead of after a full pass.
+    """
+    return incorrect_probability(token_logprobs) is not None
 
 
 def answer_prompt(question: str, options: list[str]) -> str:
