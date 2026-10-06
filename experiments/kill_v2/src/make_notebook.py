@@ -337,9 +337,11 @@ for start in range(0, len(todo), CHUNK):
         scores = [D.incorrect_probability(token_logprobs(o)) for o in outs]
         unscored = sum(x is None for x in scores) / max(len(scores), 1)
         from collections import Counter
-        print("  verdict counts:", dict(Counter(verdicts)))
+        print("  verdict counts (secondary, reported only):", dict(Counter(verdicts)))
         print(f"  unscored rate: {unscored:.1%}  (PREREG 4: unscored items are never flagged)")
-        res = D.smoke_check(verdicts,
+        # v2's primary signal is the score (PREREG 4), so the smoke check's 5% limit
+        # applies to UNSCORED items; the verdict text is secondary and only reported.
+        res = D.smoke_check(["CORRECT" if x is not None else "unparsed" for x in scores],
                             session_elapsed_s=time.time() - T_SESSION,
                             generate_elapsed_s=time.time() - t0,
                             n_done=done_n, n_total=len(todo),
