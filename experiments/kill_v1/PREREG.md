@@ -408,9 +408,37 @@ here and triggers on the *measured running total*, not on anything a result says
 With step 1 applied the worst case is **5.9**, inside the stop. The 6th-detector row is only reached if the
 observed detector dependence is extreme, and if reaching it would pass 7 hours, stop and report instead.
 
-Each notebook reports measured prompts per second at the end of its smoke test, as a check that the
-projection above holds. If the four judge notebooks project past 4.5 A100-hours between them, stop and
-report rather than quietly cutting scope beyond the order above.
+### The automatic smoke check
+
+Every GPU notebook stops itself after its **first 512-row chunk** unless two pre-registered conditions hold.
+It prints 3 raw model outputs with their parsed verdicts, the verdict counts, the unparsed rate, the
+measured prompts per second and the projected session hours, and then either continues automatically or
+raises and stops. Neither condition depends on a label, and both are fixed here.
+
+| Condition | Stop if | Source |
+|---|---|---|
+| Parse health | unparsed rate **> 5%** | §12 |
+| Budget | projected session hours past this notebook's share | §10 |
+
+Per-notebook shares, which sum to the 4.5 A100-hour judge stop and the 1.8-hour modern-arm worst case:
+
+| Notebook | Share (session hours) |
+|---|---|
+| `judge_llama3`, `judge_mistral`, `judge_qwen2` | 1.0 each |
+| `judge_phi3` (14B, the slowest) | 1.5 |
+| `modern_arm`, per model | 0.9 each |
+
+The projection is in **session** hours, not GPU-busy hours, because Colab bills session time: time already
+spent plus the remaining rows at the measured rate.
+
+A judge notebook that trips either condition **stops the run**. The modern arm, being exploratory, instead
+records the failure to `modern_arm_failures.txt`, skips that model and continues with the other one (§9b).
+Nothing is lost when a notebook stops: results already on Drive are kept and the notebook resumes.
+
+**If the check stops a judge, report it before changing anything.** Retuning the prompt or the parser to get
+past the gate, without saying so, is exactly the kind of after-the-fact adjustment this file exists to
+prevent. The logic lives in `src/detectors.py:smoke_check` and is unit-tested in `src/test_detectors.py`,
+including the boundary (exactly 5% passes, 5.1% does not) and the zero-rate case.
 
 Stop and report if the experiment passes 7 A100-hours, whatever state it is in.
 

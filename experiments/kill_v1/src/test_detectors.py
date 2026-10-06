@@ -153,6 +153,51 @@ def test_original_order_sample_contains_all_key_errors():
     return f"the 9a sample holds all {len(errors)} key errors and totals {len(sample)}"
 
 
+def test_smoke_check_passes_a_healthy_run():
+    verdicts = [D.CORRECT] * 480 + [D.INCORRECT] * 30 + [D.UNPARSED] * 2
+    r = D.smoke_check(verdicts, session_elapsed_s=300, generate_elapsed_s=60,
+                      n_done=512, n_total=16360, budget_hours=1.0, label="llama3")
+    assert r.ok, r.message
+    assert abs(r.unparsed_rate - 2 / 512) < 1e-9
+    assert abs(r.prompts_per_s - 512 / 60) < 1e-6
+    assert "PASS" in r.message and "continuing automatically" in r.message
+    return f"a healthy chunk passes (unparsed {r.unparsed_rate:.1%}, {r.projected_hours:.2f} h projected)"
+
+
+def test_smoke_check_stops_on_unparsed():
+    verdicts = [D.CORRECT] * 460 + [D.UNPARSED] * 52   # 10.2%
+    r = D.smoke_check(verdicts, 300, 60, 512, 16360, budget_hours=5.0)
+    assert not r.ok
+    assert any("unparsed" in x for x in r.reasons), r.reasons
+    assert "STOP" in r.message and "PREREG 12" in r.message
+    return f"an unparsed rate of {r.unparsed_rate:.1%} stops the run"
+
+
+def test_smoke_check_stops_on_budget():
+    verdicts = [D.CORRECT] * 512
+    # 512 rows took 600 s -> 0.85 prompts/s -> 16360 rows is well past 1 hour
+    r = D.smoke_check(verdicts, 900, 600, 512, 16360, budget_hours=1.0)
+    assert not r.ok
+    assert any("projected" in x for x in r.reasons), r.reasons
+    assert r.projected_hours > 1.0
+    return f"a slow run stops ({r.prompts_per_s:.2f} prompts/s -> {r.projected_hours:.1f} h)"
+
+
+def test_smoke_check_boundary_is_strictly_above():
+    """Exactly 5% unparsed must pass; one more must not."""
+    ok = D.smoke_check([D.UNPARSED] * 5 + [D.CORRECT] * 95, 10, 10, 100, 100, 10.0)
+    bad = D.smoke_check([D.UNPARSED] * 6 + [D.CORRECT] * 94, 10, 10, 100, 100, 10.0)
+    assert ok.ok, ok.message
+    assert not bad.ok, bad.message
+    return "the 5% unparsed limit is a strict >, so exactly 5% passes"
+
+
+def test_smoke_check_handles_a_dead_run():
+    r = D.smoke_check([D.UNPARSED] * 512, 60, 0.0, 512, 16360, budget_hours=1.0)
+    assert not r.ok and r.projected_hours == float("inf")
+    return "a zero-rate run projects to infinity and stops rather than dividing by zero"
+
+
 TESTS = [
     test_permutation_is_fixed_and_a_real_permutation,
     test_key_moves_with_its_text,
@@ -163,6 +208,11 @@ TESTS = [
     test_render_row_claims_the_right_text,
     test_parse_verdict,
     test_original_order_sample_contains_all_key_errors,
+    test_smoke_check_passes_a_healthy_run,
+    test_smoke_check_stops_on_unparsed,
+    test_smoke_check_stops_on_budget,
+    test_smoke_check_boundary_is_strictly_above,
+    test_smoke_check_handles_a_dead_run,
 ]
 
 

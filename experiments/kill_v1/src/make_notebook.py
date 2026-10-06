@@ -31,17 +31,21 @@ DRIVE_ROOT = "/content/drive/MyDrive/label_error_crc/kill_v1"
 REVISION = "372ea425445d51e1ba1188c56e5e893f8138621f"
 
 # PREREG section 3. (id, short name, bf16 weights, note)
+# (id, short name, note, smoke-check budget in session hours).
+# The four budgets sum to 4.5, which is the stop in PREREG 10; Phi-3 is 14B and
+# gets the larger share. A notebook that projects past its own share stops.
 JUDGES = [
-    ("meta-llama/Meta-Llama-3-8B-Instruct", "llama3", "gated: accept the licence and set HF_TOKEN"),
-    ("mistralai/Mistral-7B-Instruct-v0.3", "mistral", ""),
-    ("Qwen/Qwen2-7B-Instruct", "qwen2", ""),
-    ("microsoft/Phi-3-medium-4k-instruct", "phi3", "14B, the slowest of the four"),
+    ("meta-llama/Meta-Llama-3-8B-Instruct", "llama3", "gated: accept the licence and set HF_TOKEN", 1.0),
+    ("mistralai/Mistral-7B-Instruct-v0.3", "mistral", "", 1.0),
+    ("Qwen/Qwen2-7B-Instruct", "qwen2", "", 1.0),
+    ("microsoft/Phi-3-medium-4k-instruct", "phi3", "14B, the slowest of the four", 1.5),
 ]
 
 # PREREG section 9b, both verified on the Hub 2026-10-07.
+# (id, short name, note, budget). Budgets sum to 1.8, the worst case in PREREG 10.
 MODERN = [
-    ("Qwen/Qwen3.8-27B-FP8", "qwen38", "30.9 GB, FP8 has no native Ampere support"),
-    ("google/gemma-4-31B-it-qat-w4a16-ct", "gemma4", "23.3 GB, W4A16 runs natively on Ampere"),
+    ("Qwen/Qwen3.8-27B-FP8", "qwen38", "30.9 GB, FP8 has no native Ampere support", 0.9),
+    ("google/gemma-4-31B-it-qat-w4a16-ct", "gemma4", "23.3 GB, W4A16 runs natively on Ampere", 0.9),
 ]
 
 
@@ -78,6 +82,8 @@ def _embed(src_dir: str, name: str) -> dict:
 # --------------------------------------------------------------------------
 
 SETUP = f'''
+import time
+T_SESSION = time.time()   # Colab bills session time, so the clock starts here
 # Colab A100 40GB, Ampere (SM80). Pinned so a vLLM release cannot change the run.
 !pip -q install "vllm==0.11.0" "huggingface_hub>=0.26" 2>&1 | tail -2
 import os, torch
@@ -187,6 +193,7 @@ params = SamplingParams(temperature=0.0, max_tokens=24)
 
 CHUNK = 512
 t0 = time.time()
+gate_done = False
 for start in range(0, len(todo), CHUNK):
     chunk = todo[start:start + CHUNK]
     prompts, metas = [], []
@@ -206,6 +213,28 @@ for start in range(0, len(todo), CHUNK):
                 "raw": text[:200], "verdict": D.parse_verdict(text),
             }) + "\\n")
     done_n = start + len(chunk)
+
+    if not gate_done:
+        gate_done = True
+        # --- automatic smoke check, PREREG 10 and 12 ---
+        print("\\n--- first chunk: 3 raw model outputs ---")
+        for row, out in list(zip(chunk, outs))[:3]:
+            raw = out.outputs[0].text
+            print(f"  [{row.kind} {row.row_id}]")
+            print("   raw:", repr(raw[:160]))
+            print("   parsed:", D.parse_verdict(raw))
+        verdicts = [D.parse_verdict(o.outputs[0].text) for o in outs]
+        from collections import Counter
+        print("  verdict counts:", dict(Counter(verdicts)))
+        res = D.smoke_check(verdicts,
+                            session_elapsed_s=time.time() - T_SESSION,
+                            generate_elapsed_s=time.time() - t0,
+                            n_done=done_n, n_total=len(todo),
+                            budget_hours=BUDGET_HOURS, label=SHORT)
+        print("\\n" + res.message + "\\n", flush=True)
+        if not res.ok:
+            raise SystemExit(f"STOPPED by the smoke check: {'; '.join(res.reasons)}")
+
     rate = done_n / (time.time() - t0)
     print(f"{done_n}/{len(todo)}  {rate:.1f} prompts/s  "
           f"eta {(len(todo) - done_n) / max(rate, 1e-9) / 60:.1f} min", flush=True)
@@ -276,7 +305,7 @@ print("flushed. Close this session now -- Colab bills session time, not GPU use.
 '''
 
 
-def judge_notebook(src_dir: str, model: str, short: str, note: str) -> dict:
+def judge_notebook(src_dir: str, model: str, short: str, note: str, budget: float) -> dict:
     head = f"""
 # Judge worker: `{model}`
 
@@ -291,7 +320,8 @@ Order of cells: setup, data, work list, resume, judge pass, probability pass, fl
     cells = [
         _md(head),
         _code(SETUP),
-        _code(f'MODEL = "{model}"\nSHORT = "{short}"\nprint(MODEL)'),
+        _code(f'MODEL = "{model}"\nSHORT = "{short}"\nBUDGET_HOURS = {budget}\n'
+              f'print(MODEL, "| smoke-check budget", BUDGET_HOURS, "session hours")'),
         _embed(src_dir, "detectors.py"),
         _code(DATA_CELL),
         _code(WORKLIST_CELL),
@@ -316,7 +346,8 @@ from transformers import AutoTokenizer
 REDUX_ROWS = [r for r in ROWS if r.kind == D.REDUX]
 params = SamplingParams(temperature=0.0, max_tokens=24)
 
-for MODEL, SHORT, NOTE in MODERN_MODELS:
+for MODEL, SHORT, NOTE, BUDGET in MODERN_MODELS:
+    T_MODEL = time.time()
     OUT = os.path.join(DRIVE, f"modern_{SHORT}.jsonl")
     done = set()
     if os.path.exists(OUT):
@@ -339,7 +370,8 @@ for MODEL, SHORT, NOTE in MODERN_MODELS:
             fh.write(f"{MODEL}\\t{type(exc).__name__}\\t{exc}\\n")
         continue
     t0 = time.time()
-    CHUNK = 256
+    CHUNK = 512
+    gate_done = False
     for start in range(0, len(todo), CHUNK):
         chunk = todo[start:start + CHUNK]
         prompts, metas = [], []
@@ -358,6 +390,31 @@ for MODEL, SHORT, NOTE in MODERN_MODELS:
                     "raw": text[:200], "verdict": D.parse_verdict(text),
                 }) + "\\n")
         n = start + len(chunk)
+
+        if not gate_done:
+            gate_done = True
+            print("\\n--- first chunk: 3 raw model outputs ---")
+            for row, out in list(zip(chunk, outs))[:3]:
+                raw = out.outputs[0].text
+                print(f"  [{row.row_id}]")
+                print("   raw:", repr(raw[:160]))
+                print("   parsed:", D.parse_verdict(raw))
+            verdicts = [D.parse_verdict(o.outputs[0].text) for o in outs]
+            from collections import Counter
+            print("  verdict counts:", dict(Counter(verdicts)))
+            res = D.smoke_check(verdicts,
+                                session_elapsed_s=time.time() - T_MODEL,
+                                generate_elapsed_s=time.time() - t0,
+                                n_done=n, n_total=len(todo),
+                                budget_hours=BUDGET, label=SHORT)
+            print("\\n" + res.message + "\\n", flush=True)
+            if not res.ok:
+                # exploratory arm: record it, skip this model, keep the other one
+                with open(os.path.join(DRIVE, "modern_arm_failures.txt"), "a") as fh:
+                    fh.write(f"{MODEL}\\tsmoke_check\\t{'; '.join(res.reasons)}\\n")
+                print(f"SKIPPING {MODEL} and moving on (PREREG 9b).")
+                break
+
         rate = n / (time.time() - t0)
         print(f"  {n}/{len(todo)}  {rate:.1f}/s  eta {(len(todo)-n)/max(rate,1e-9)/60:.1f} min", flush=True)
     del llm, tok
@@ -368,7 +425,7 @@ print("MODERN ARM DONE")
 
 
 def modern_notebook(src_dir: str) -> dict:
-    models = ",\n    ".join(f'("{m}", "{s}", "{n}")' for m, s, n in MODERN)
+    models = ",\n    ".join(f'("{m}", "{s}", "{n}", {b})' for m, s, n, b in MODERN)
     head = """
 # Exploratory: what do modern judges still miss?
 
@@ -386,7 +443,7 @@ continues with the other one -- it does **not** substitute a different model.
     cells = [
         _md(head),
         _code(SETUP),
-        _code(f"MODERN_MODELS = [\n    {models},\n]\nfor m in MODERN_MODELS: print(m[0])"),
+        _code(f"MODERN_MODELS = [\n    {models},\n]\nfor m in MODERN_MODELS: print(m[0], '| budget', m[3], 'h')"),
         _embed(src_dir, "detectors.py"),
         _code(DATA_CELL),
         _code(WORKLIST_CELL),
@@ -572,10 +629,10 @@ def main():
     os.makedirs(args.out, exist_ok=True)
 
     written = []
-    for model, short, note in JUDGES:
+    for model, short, note, budget in JUDGES:
         path = os.path.join(args.out, f"judge_{short}.ipynb")
         with open(path, "w") as fh:
-            json.dump(judge_notebook(args.src, model, short, note), fh, indent=1)
+            json.dump(judge_notebook(args.src, model, short, note, budget), fh, indent=1)
         written.append(path)
     path = os.path.join(args.out, "modern_arm.ipynb")
     with open(path, "w") as fh:

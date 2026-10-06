@@ -33,8 +33,15 @@ each other; they write to different files on the same Drive folder.
    load. Nothing else is gated.
 2. **Check the GPU you actually got.** The first cell prints the device name, compute capability and
    memory. Expect `A100`, `(8, 0)`, `~42 GB`. If you got a T4 or a V100, stop — the models will not fit.
-3. **Watch the prompts/s line.** Each judge prints a rate and an ETA every 512 rows. If the four judges
-   together project past 4.5 A100-hours, stop and report rather than cutting scope (`PREREG.md` §10).
+3. **The notebooks check themselves.** After the first 512-row chunk each GPU notebook prints 3 raw model
+   outputs with their parsed verdicts, the unparsed rate, the measured prompts/s and the projected session
+   hours, then either continues automatically or stops. It stops if the unparsed rate is above 5%
+   (`PREREG.md` §12) or the projection passes that notebook's budget — 1.0 session hours for llama3,
+   mistral and qwen2, 1.5 for phi3, 0.9 per model in the modern arm (`PREREG.md` §10). The modern arm skips
+   the offending model and carries on instead of stopping, since it is exploratory.
+
+   **If a judge stops, tell me before changing anything.** Nothing is lost: what is on Drive is kept and the
+   notebook resumes where it left off.
 
 ## What each one prints when it is done
 

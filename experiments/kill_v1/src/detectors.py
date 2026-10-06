@@ -266,3 +266,96 @@ def parse_verdict(text: str) -> str:
 def is_flag(verdict: str) -> bool:
     """A detector flags the item when it says the claimed key is INCORRECT."""
     return verdict == INCORRECT
+
+
+# --------------------------------------------------------------------------
+# the automatic smoke check (PREREG 10, 12)
+# --------------------------------------------------------------------------
+
+MAX_UNPARSED = 0.05  # PREREG 12: above this the model is reported as broken
+
+
+@dataclass
+class SmokeResult:
+    """The verdict of the after-first-chunk check. `ok` False means stop."""
+
+    ok: bool
+    unparsed_rate: float
+    prompts_per_s: float
+    projected_hours: float
+    budget_hours: float
+    reasons: list[str]
+    message: str
+
+
+def smoke_check(
+    verdicts: list[str],
+    session_elapsed_s: float,
+    generate_elapsed_s: float,
+    n_done: int,
+    n_total: int,
+    budget_hours: float,
+    label: str = "",
+    max_unparsed: float = MAX_UNPARSED,
+) -> SmokeResult:
+    """Decide, after the first chunk, whether this notebook may keep going.
+
+    Two pre-registered stop conditions, both fixed in advance and neither
+    depending on any label:
+
+    * unparsed rate above 5% -- PREREG 12 says the model is then reported as
+      broken, not quietly treated as a detector that flags nothing;
+    * projected session hours past this notebook's share of the GPU budget --
+      PREREG 10.
+
+    The projection is in *session* hours, not GPU-busy hours, because Colab
+    bills session time: it is the time already spent plus the time the
+    remaining rows will take at the measured rate.
+    """
+    n = max(len(verdicts), 1)
+    unparsed_rate = sum(v == UNPARSED for v in verdicts) / n
+    rate = n_done / generate_elapsed_s if generate_elapsed_s > 0 else 0.0
+    remaining = max(n_total - n_done, 0)
+    projected_hours = (
+        (session_elapsed_s + remaining / rate) / 3600.0 if rate > 0 else float("inf")
+    )
+
+    reasons = []
+    if unparsed_rate > max_unparsed:
+        reasons.append(
+            f"unparsed rate {unparsed_rate:.1%} is above the {max_unparsed:.0%} limit "
+            f"(PREREG 12). The prompt or the parser does not fit this model. "
+            f"Do not treat it as a detector that flags nothing."
+        )
+    if projected_hours > budget_hours:
+        reasons.append(
+            f"projected {projected_hours:.2f} session hours is past this notebook's "
+            f"budget of {budget_hours:.2f} (PREREG 10) at {rate:.1f} prompts/s."
+        )
+
+    head = f"SMOKE CHECK {label}".strip()
+    body = (
+        f"  rows done        {n_done} of {n_total}\n"
+        f"  unparsed rate    {unparsed_rate:.1%}  (limit {max_unparsed:.0%})\n"
+        f"  prompts/s        {rate:.1f}\n"
+        f"  projected hours  {projected_hours:.2f}  (budget {budget_hours:.2f})"
+    )
+    if reasons:
+        message = (
+            f"{head}: STOP\n{body}\n\n"
+            + "\n".join(f"  * {r}" for r in reasons)
+            + "\n\n  Nothing is lost: what is on Drive is kept and the notebook resumes.\n"
+            "  Report this before changing anything. Do not retune the prompt or the\n"
+            "  parser to make the number go away without saying so."
+        )
+    else:
+        message = f"{head}: PASS, continuing automatically\n{body}"
+    return SmokeResult(
+        ok=not reasons,
+        unparsed_rate=unparsed_rate,
+        prompts_per_s=rate,
+        projected_hours=projected_hours,
+        budget_hours=budget_hours,
+        reasons=reasons,
+        message=message,
+    )
