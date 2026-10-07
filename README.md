@@ -11,6 +11,7 @@ October 2026
 [![Status: pre-registered negative result](https://img.shields.io/badge/status-pre--registered%20negative%20result-8a5cf6)](experiments/kill_v2/PREREG.md)
 [![Experiment 1: NO-GO](https://img.shields.io/badge/experiment%201-NO--GO-e34948)](experiments/kill_v1/RESULTS.md)
 [![Experiment 2: PARTIAL](https://img.shields.io/badge/experiment%202-PARTIAL-eda100)](experiments/kill_v2/RESULTS.md)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23205993.svg)](https://doi.org/10.5281/zenodo.23205993)
 [![Code: MIT](https://img.shields.io/badge/code-MIT-2a78d6)](LICENSE)
 [![Text: CC BY 4.0](https://img.shields.io/badge/text-CC%20BY%204.0-1baf7a)](https://creativecommons.org/licenses/by/4.0/)
 [![Runs on Colab](https://img.shields.io/badge/runs%20on-Google%20Colab-52514e)](experiments/kill_v2/notebooks/)
@@ -128,6 +129,9 @@ If you use this work, please cite:
   title        = {How Many Label Errors Are Left? Capture--Recapture for Counting the Benchmark Errors Nobody Found},
   year         = {2026},
   month        = oct,
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.23205993},
+  url          = {https://doi.org/10.5281/zenodo.23205993},
   howpublished = {\url{https://github.com/ParitKansal/label-error-capture-recapture}},
   note         = {Pre-registered negative result. GitHub repository}
 }

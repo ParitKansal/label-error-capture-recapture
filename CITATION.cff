@@ -11,6 +11,14 @@ url: "https://github.com/ParitKansal/label-error-capture-recapture"
 date-released: 2026-10-06
 version: "1.0.0"
 license: MIT
+doi: "10.5281/zenodo.23205993"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.23205993"
+    description: "Concept DOI: all versions, resolves to the latest"
+  - type: doi
+    value: "10.5281/zenodo.23205994"
+    description: "Version 1.0.0"
 abstract: >-
   Tests whether capture-recapture (multiple-systems estimation) over several automated label-error detectors can
   estimate the total number of wrong answer keys in a benchmark, including those no detector found. Two pre-registered
